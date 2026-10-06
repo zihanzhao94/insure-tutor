@@ -1,0 +1,11 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #202b3c;
+  background: #f6f8fb;
+}
+
+main { max-width: 760px; margin: 48px auto; padding: 24px; }
+section { margin-top: 24px; padding: 24px; background: white; border-radius: 12px; }
+textarea { box-sizing: border-box; display: block; width: 100%; margin: 12px 0; }
+select, textarea, button { font: inherit; padding: 8px; }
+button:disabled { cursor: not-allowed; }

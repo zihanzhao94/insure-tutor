@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: .
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/raw:/app/data/raw:ro
+      - ./data/processed:/app/data/processed
+      - ./data/index:/app/data/index
+      - ./data/sessions:/app/data/sessions
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
