@@ -196,3 +196,20 @@ The preview is a shortened original source passage, selected using shared terms
 and numbers. It does not translate the PDF, reconstruct tables, highlight an exact
 PDF paragraph or independently prove the cited claim's meaning. The complete
 source remains accessible through the page link.
+
+## Dynamic source-library display
+
+Checked on 2026-10-07:
+
+- **14 frontend tests passed** and TypeScript/Vite build passed. No backend
+  logic or source-index data was changed.
+- The rebuilt Docker UI no longer contains the three fixed example questions,
+  a fixed product heading, or an assumed document-language label.
+- English and Simplified Chinese browser checks confirmed the welcome copy,
+  actual indexed filename `FLEXI-ULife Prime Saver 23.15.41.pdf`, and its original
+  PDF link. See [source-library.png](source-library.png).
+
+The source library uses `/api/health`'s active-index document list. Changed files
+require ingestion and a page refresh; this check did not replace the supplied
+PDF or evaluate a different insurance product. Brochure-specific backend prompts
+and conflict rules remain, as explained in the README.

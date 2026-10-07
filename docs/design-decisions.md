@@ -284,6 +284,15 @@ OpenCC still normalizes Chinese for retrieval/input rules and translates fixed
 notices. Starting a new conversation or refreshing the interface starts a new
 UI session. Stored session IDs provide separation, not access control.
 
+The welcome screen has no fixed suggested questions. The source library displays
+the active index's actual filenames from `/api/health`, with a PDF link for each
+document and a localized empty/loading state. Introductory copy does not assume
+a product name, one source file or the source document's languages. Replacing
+files in `data/raw/` requires ingestion and a refresh; the UI does not watch the
+directory or provide upload controls. Source display is dynamic, while the
+brochure-specific answer instructions and conflict checks still need review
+before changing insurance products.
+
 ## 7. Code boundaries and index lifecycle
 
 | Module | Responsibility |

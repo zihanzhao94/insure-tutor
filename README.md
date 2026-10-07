@@ -94,6 +94,19 @@ The fingerprint tracks PDF contents, chunk settings, and embedding configuration
 If extraction, splitting, or vector-processing code changes, use `--force` to
 rebuild; this demo does not maintain a separate index version.
 
+The source library displays filenames from the active index via `/api/health`,
+including a separate PDF link for each document. The welcome screen has no fixed
+suggested questions or product name. To replace the source files, update the PDFs
+in `data/raw/`, restart the backend with `AUTO_INGEST=true` (the default), and
+refresh the interface. With automatic ingestion disabled, run manual ingestion
+instead. Copying files into the directory alone does not update the active index.
+There is no browser upload flow.
+
+This makes source display dynamic, but the answer prompts and known-conflict
+handling still contain checks tailored to the supplied FLEXI-ULife brochure.
+Using another product requires reviewing those rules and running new source-grounded
+evaluations; a changed filename is not evidence of general document support.
+
 The former `data/index/index.sqlite` vector file is no longer read. The first
 startup after this migration builds Chroma from the source PDF; later startups
 reuse it. The old file can remain as a local backup.
