@@ -2,11 +2,16 @@
 
 A bilingual insurance tutor for the supplied **FLEXI-ULife Prime Saver** brochure.
 Ask questions in English, Simplified Chinese, or Traditional Chinese; follow up
-in the same conversation; click inline citations to open the original PDF page.
+in the same conversation; click inline citations to preview the original evidence.
 Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings. Answers appear
 as validated paragraphs arrive, with compact reference links beside each claim.
-Hover or focus a reference for its filename and PDF page; click to open that page
-in another tab. Raw extracted passages are not expanded in the chat.
+Click a reference to open a dialog with its filename, PDF file page, a short
+original excerpt and a **View PDF** link to that page. The preview favors source
+sentences sharing the cited claim's terms and numbers. The display joins wrapped
+lines and spaced Chinese characters, while preserving English words and policy
+figures. Numeric rows retain their line breaks. Long excerpts are shortened with
+an ellipsis; the PDF retains the original
+table layout. Close the dialog with its close button, Escape or the backdrop.
 The language selector changes the interface and fixed system notices only.
 The model chooses its response language from the latest user question by default,
 including an explicit preference in that question. Generated text is not translated or
@@ -111,7 +116,7 @@ flowchart LR
     API -->|SSE updates and authoritative final answer| UI
 ```
 
-![InsureTutor answering with inline PDF citations](docs/inline-citations.jpg)
+![InsureTutor source preview with original excerpt and View PDF](docs/citation-preview.png)
 
 The editable module diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requirements.

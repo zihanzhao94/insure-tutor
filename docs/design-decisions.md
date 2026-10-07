@@ -221,11 +221,24 @@ scope; it is not the full policy contract.
 
 The assignment requires grounded answers with accurate citations, but does not
 require raw passages to appear in the chat. Each claim's reference number is a
-small accessible link to `/api/documents/<filename>#page=N`. Its label and tooltip
-identify the file and one-based PDF file page. The original PDF retains its table
-layout; the chat avoids displaying broken extraction. Page fragments depend on
-the browser's PDF viewer. Exact paragraph positioning/highlighting would require
-an additional viewer and is outside this implementation.
+small accessible button that opens a native modal dialog with the file, one-based
+PDF file page, original snippet and a **View PDF** link to
+`/api/documents/<filename>#page=N`. The dialog supports keyboard focus trapping,
+Escape, a close button and backdrop dismissal.
+
+The server uses a validated exact quote when supplied, otherwise the original
+retrieved chunk text. The frontend merges whitespace/line wraps and spaces between
+Chinese characters without translating or rewriting the source. Numeric rows keep
+their line breaks rather than being joined into prose. To avoid always showing an
+unrelated chunk opening, sentence windows are ranked by shared claim terms and
+numbers. This is a display heuristic, not semantic evidence validation; the link
+still opens the complete original PDF page. It limits previews
+to 420 Unicode characters, preferring a complete sentence and avoiding a cut through
+English words or numeric values. Truncated previews include an ellipsis.
+This display cleanup does not reconstruct tables; the original PDF retains its
+layout. Page fragments depend on the browser's PDF viewer. Exact paragraph
+positioning/highlighting would require an additional viewer and is outside this
+implementation.
 
 `POST /api/chat/stream` returns server-sent events: `start`, `status`, `delta`,
 `reset`, `result`, and `error`. Each `delta` contains append-only validated text

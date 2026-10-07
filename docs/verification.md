@@ -172,3 +172,27 @@ Traditional-question and explicit-Traditional cases returned Traditional Chinese
 Fixed notices and disclaimers remain in the interface locale. The live overview
 still paraphrased some exclusions too broadly; the semantic limitation recorded
 above remains. No independent semantic judge or source-display change was added.
+
+## Clickable source previews
+
+Checked on 2026-10-07:
+
+- **53 targeted backend tests passed** for RAG and streaming. A citation selected
+  by chunk ID retains the server-owned original excerpt, filename, page and URL.
+- **14 frontend tests passed**, including line-wrap cleanup, Chinese spacing,
+  preservation of policy figures and numeric rows, Unicode-safe truncation,
+  and selecting a claim-related passage instead of an unrelated chunk opening.
+  TypeScript/Vite build passed; both Docker services are running and the backend
+  is healthy. No new model call or index rebuild was required.
+- Browser checks confirmed that an inline citation opens a dialog with filename,
+  PDF file page, original snippet and **View PDF**. The snippet uses natural
+  wrapping instead of the PDF's broken line layout. English, Simplified and
+  Traditional interface labels were checked without changing answer/source text.
+- The close button, Escape and backdrop dismissed the dialog. Keyboard Tab from
+  the close button reached **View PDF**. Its link opened the original PDF viewer
+  at **page 15 of 20**. See [citation-preview.png](citation-preview.png).
+
+The preview is a shortened original source passage, selected using shared terms
+and numbers. It does not translate the PDF, reconstruct tables, highlight an exact
+PDF paragraph or independently prove the cited claim's meaning. The complete
+source remains accessible through the page link.
