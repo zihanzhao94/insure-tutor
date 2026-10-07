@@ -2,11 +2,11 @@
 
 A bilingual insurance tutor for the supplied **FLEXI-ULife Prime Saver** brochure.
 Ask questions in English, Simplified Chinese, or Traditional Chinese; follow up
-in the same conversation; inspect source passages and open their original PDF
-pages. Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings.
-Source cards group references by PDF page while preserving citation numbers.
-Extracted text is collapsed by default and scrolls within a bounded panel;
-the original PDF page remains accessible without expanding the text.
+in the same conversation; click inline citations to open the original PDF page.
+Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings. Answers appear
+as validated paragraphs arrive, with compact reference links beside each claim.
+Hover or focus a reference for its filename and PDF page; click to open that page
+in another tab. Raw extracted passages are not expanded in the chat.
 
 ## Quick start with Docker
 
@@ -102,12 +102,12 @@ flowchart LR
     History[(Local conversation SQLite)] <--> API
     RAG <-->|Cosine query and chunk metadata| Store
     RAG -->|Question and retrieved passages| GPT[GPT API]
-    GPT -->|Structured claims and source IDs| Check[Evidence and number validation]
-    Check -->|Answer, source text and PDF pages| API
-    API --> UI
+    GPT -->|Streamed JSON claims and source IDs| Check[Evidence and number validation]
+    Check -->|Validated claims and PDF page links| API
+    API -->|SSE updates and authoritative final answer| UI
 ```
 
-![InsureTutor answering with grouped PDF references](docs/source-cards.jpg)
+![InsureTutor answering with inline PDF citations](docs/inline-citations.jpg)
 
 The editable module diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requirements.
@@ -126,7 +126,7 @@ backend/app/
 └── rag/
     ├── ingest.py    load_pdf → split_pages → build_index (offline)
     └── query.py     load_index → retrieve → answer_question (online)
-frontend/src/        React chat, language selector and expandable source cards
+frontend/src/        React chat, SSE reader, language selector and inline citations
 data/raw/            Original source PDF
 data/processed/      Extracted pages/chunks (generated; ignored)
 data/index/chroma/   Chroma text, vectors and metadata (generated; ignored)
@@ -177,6 +177,14 @@ evals/               Source-grounded API smoke cases and runner
   unknown IDs, unverifiable quotes, unsupported numeric values and malformed
   answers; rejected output becomes an insufficient-evidence response. Numeric
   formatting such as `4` versus `4.0` is normalized.
+- **Validated streaming.** The UI calls `POST /api/chat/stream`. OpenAI streams
+  JSON text; the backend buffers each complete claim and checks its sources and
+  numbers before sending a paragraph and its citations. It never exposes partial
+  JSON or an unchecked claim. The final full response replaces provisional text,
+  and only that response is saved. A failed overview repair clears its preview;
+  provider errors remove the incomplete turn. This is paragraph streaming rather
+  than character-by-character output. `POST /api/chat` remains available as JSON
+  for evaluation and other clients. The optional Claude adapter remains buffered.
 - **Conversation context.** Random session IDs isolate local SQLite histories.
   Short/pronominal follow-ups include recent questions and the previous answer
   as context, while factual support must still come from fresh retrieval. New
@@ -194,7 +202,7 @@ evals/               Source-grounded API smoke cases and runner
   They interleave/deduplicate sources and keep the same
   17,000-character budget. This adds five query embeddings rather than one.
   If a generated overview fails source/number validation, the model may correct
-  it once; the same validation must pass before any answer is displayed.
+  it once; the same validation must pass before each claim is displayed.
   Extractive mode retains keyword scope checks and skips AI classification.
   The system prompt treats retrieved text as untrusted data and requires
   evidence-backed claims. A narrowly scoped deterministic comparison flags the
@@ -243,6 +251,7 @@ the default tested submission configuration.
 .venv/bin/pip install -r backend/requirements-dev.txt
 .venv/bin/python -m pytest backend/tests -q
 cd frontend && npm run build
+npm test
 ```
 
 With the backend running (uses the configured model API):
@@ -264,6 +273,9 @@ Recorded checks: [docs/verification.md](docs/verification.md).
 - This demo supports digitally extractable PDFs, not scanned-document OCR.
   PDF table extraction can lose layout or glyphs. Review source pages when
   tables or translations conflict.
+- Citations use one-based PDF file pages, not printed pagination. `#page=N`
+  requests that page in the browser's PDF viewer; exact paragraph highlighting
+  is not implemented, and viewers may handle page fragments differently.
 - Retrieval still loads all chunk text and requests all distances for the small
   brochure corpus. A large collection needs bounded Chroma candidates, stronger
   reranking and targeted footnote links. `PersistentClient` is for this local

@@ -106,3 +106,41 @@ mental illness itself is excluded. The overview prompt explicitly cautions
 against this, but source-ID and number validation cannot enforce that meaning.
 Exact exclusions, waiting-period conditions and financial guarantees still need
 review against the PDF; no independent semantic output judge was added.
+
+## Streaming and inline citations
+
+Checked on 2026-10-07 with the same GPT/OpenAI configuration:
+
+- **86 non-network backend tests passed**, including 30 streaming cases.
+  Checks cover genuine incremental emission, closed/escaped JSON claims,
+  rejection of unsupported sources/numbers/quotes, authoritative final rejection,
+  one overview repair with reset, provider refusals/truncation/disconnection,
+  SSE errors and completed-only conversation persistence.
+- **11 frontend tests passed** for UTF-8 and SSE fragmentation, CRLF boundaries,
+  incomplete/error responses, reset/final replacement, cancellation propagation
+  into fetch and reader cleanup, and safe inline citation URLs.
+  TypeScript/Vite builds passed locally and inside Docker.
+- Both Docker services restarted; the backend was healthy. The frontend,
+  proxied health endpoint and original PDF endpoint returned 200. The existing
+  Chroma index was reused; no ingestion or embedding migration was needed.
+- **8/8 live SSE smoke cases passed**: Simplified Chinese cooling-off,
+  Traditional Chinese overview, missing claim-document evidence, injection,
+  unrelated input, bilingual table conflict, English guarantee and its follow-up.
+  Report: `evals/results/20261007T092144Z-streaming.json` (ignored).
+  The overview's first validated paragraph arrived at **7.996 seconds** and its
+  final response at **13.119 seconds**. Successful answer deltas concatenated to
+  the final answer; source links and reference numbers matched their metadata.
+- Browser checks confirmed English and Traditional Chinese inline references,
+  language switching without rewriting old messages, and removal of raw-source
+  cards. Clicking reference 1 opened the PDF viewer at **page 8 of 20**.
+  See [inline-citations.jpg](inline-citations.jpg).
+
+Streaming exposes validated paragraphs rather than raw model tokens. A final
+failure can replace an earlier supported preview. Stop restores the composer
+immediately; request identity guards ignore late updates from a canceled turn.
+Provider reads can finish their current read before transport resources release.
+References request PDF file pages, with no paragraph highlighting.
+
+Manual review of the live overview still found overly broad terminal-illness
+exclusion wording. The existing semantic limitation remains: source and numeric
+validation establish provenance, not the correctness of every interpretation.

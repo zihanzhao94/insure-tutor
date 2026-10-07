@@ -7,8 +7,8 @@ the [README](../README.md); recorded checks are in [verification.md](verificatio
 ## 1. Scope and priorities
 
 InsureTutor answers questions about the supplied insurance brochure, supports
-English, Simplified Chinese and Traditional Chinese, and provides source text
-and PDF page references. The [assignment](TakeHomeTask-InsureTutor.md) requires
+English, Simplified Chinese and Traditional Chinese, and provides clickable
+PDF page references. The [assignment](TakeHomeTask-InsureTutor.md) requires
 chat, RAG, guardrails and Docker execution, while leaving the framework, data
 store and interface design open.
 
@@ -57,7 +57,7 @@ on the backend in environment configuration.
 
 | Area | Selected technology | Reason for this demo | Tradeoff |
 |---|---|---|---|
-| Frontend | React, TypeScript, Vite | Explicit state for messages, language, source cards and API errors; typed request/response records | A separate frontend build; Docker currently serves it through the Vite development server |
+| Frontend | React, TypeScript, Vite | Explicit state for streamed messages, language, inline references and API errors; typed records | A separate frontend build; Docker currently serves it through the Vite development server |
 | Backend | Python, FastAPI, Pydantic | PDF processing and retrieval share one Python application; request and answer schemas make validation explicit | Domain rules and evidence checks still require application code |
 | PDF extraction | `pypdf` | Reads selectable text page by page and handles the supplied PDF's empty-password encryption | No OCR; table layout and glyph extraction can be imperfect |
 | Chunking | `RecursiveCharacterTextSplitter` | Reuses boundary-aware splitting with paragraph, line and Chinese punctuation separators | Character lengths are approximate information budgets, not token counts |
@@ -186,7 +186,8 @@ confidence score.
 
 The model returns claim text and source IDs. The backend supplies the source
 passages, filenames, page links and citation markers. Invalid or unsupported
-output becomes an insufficient-evidence response rather than being displayed.
+output becomes an insufficient-evidence response. Streamed claims pass the same
+checks before display; the complete final response replaces any preview.
 This prevents invented citation locations while keeping source support open to
 review. It does not replace semantic evaluation of the answer.
 
@@ -215,6 +216,38 @@ today's rates and the 15-year accumulated-value guarantee from an annual credite
 rate. Missing claim-document lists and processing times are not inferred from
 surrender rules or external links. Answers also state the brochure's limited
 scope; it is not the full policy contract.
+
+### Inline references and streaming
+
+The assignment requires grounded answers with accurate citations, but does not
+require raw passages to appear in the chat. Each claim's reference number is a
+small accessible link to `/api/documents/<filename>#page=N`. Its label and tooltip
+identify the file and one-based PDF file page. The original PDF retains its table
+layout; the chat avoids displaying broken extraction. Page fragments depend on
+the browser's PDF viewer. Exact paragraph positioning/highlighting would require
+an additional viewer and is outside this implementation.
+
+`POST /api/chat/stream` returns server-sent events: `start`, `status`, `delta`,
+`reset`, `result`, and `error`. Each `delta` contains append-only validated text
+and the cumulative citation list. The existing JSON `/api/chat` shares the same
+orchestration and remains available for evaluation clients.
+
+The OpenAI request uses native streaming and the existing strict answer schema.
+The backend decodes complete claim objects, validates source IDs/quotes/numbers,
+then emits paragraphs. It holds incomplete or invalid claims. JSON with a different
+key order falls back to final validation. A normal provider finish and `[DONE]`
+are required; refusals, truncation and disconnection produce safe errors.
+Overview repair clears the earlier preview before its single retry. The complete
+final result is authoritative, including an insufficient-evidence replacement,
+and only the canonical response is persisted. Source/number validation still
+does not establish semantic correctness. The optional Claude adapter remains
+buffered, and extractive mode requires no generation stream.
+
+The frontend assembles SSE frames and UTF-8 characters across network boundaries,
+supports Stop and a 120-second timeout, and requires a final result. Errors or
+cancellation remove the incomplete turn and restore the question. Synchronous
+provider reads may finish their current read before releasing resources after
+client cancellation. No extra framework or AI call is needed for citation layout.
 
 ## 6. Conversations and languages
 
@@ -262,10 +295,10 @@ manual vector file, `data/index/index.sqlite`, is no longer read.
 
 ## 8. Verification and next steps
 
-The recorded baseline passed 36 non-network backend tests, Docker startup and
-health checks, and 14 API smoke cases covering three languages, follow-ups,
-missing evidence, source conflicts and misuse. Frontend build and browser checks
-are also recorded in [verification.md](verification.md). Smoke checks establish
+Backend tests cover retrieval, guardrails, persistence and streaming. Frontend
+tests cover fragmented SSE, cancellation, final-result replacement and citation
+links. Docker, live API and browser checks are recorded in
+[verification.md](verification.md). Smoke checks establish
 the tested behaviors; they do not establish general answer correctness or provide
 a model/vector-database benchmark.
 
