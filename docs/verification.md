@@ -144,3 +144,31 @@ References request PDF file pages, with no paragraph highlighting.
 Manual review of the live overview still found overly broad terminal-illness
 exclusion wording. The existing semantic limitation remains: source and numeric
 validation establish provenance, not the correctness of every interpretation.
+
+## Interface and answer language separation
+
+Checked on 2026-10-07 with the same GPT/OpenAI configuration:
+
+- **92 non-network backend tests passed**. Added checks cover both buffered and
+  streamed answers: the interface locale is absent from the generation payload,
+  and model text is preserved without Chinese script conversion. Overview repair
+  feedback explicitly preserves the original end-user language preference.
+- **11 frontend tests passed**; TypeScript/Vite build passed. The request now
+  sends `ui_language` for fixed notices only, and the selector is labelled
+  "Interface language" in English and both Chinese interfaces.
+- Both Docker images were rebuilt, and the updated backend was rebuilt again
+  after the prompt adjustment. The existing index was reused.
+- **5/5 live SSE language smoke checks passed**: English interface with a Chinese
+  question, Chinese interface with an English question, Simplified interface with
+  a Traditional question, an explicit request for Traditional Chinese, and the
+  exact screenshot question `这个文档的主要内容总结一下` in an English interface.
+  The screenshot question returned a Simplified Chinese overview with source
+  references. Report: `evals/results/20261007T100128Z-auto-language.json` (ignored).
+
+These checks establish Chinese versus English response behavior, not guaranteed
+script matching. The Simplified cooling-off question returned Traditional Chinese
+despite the prompt's default; the application preserves that model output. The
+Traditional-question and explicit-Traditional cases returned Traditional Chinese.
+Fixed notices and disclaimers remain in the interface locale. The live overview
+still paraphrased some exclusions too broadly; the semantic limitation recorded
+above remains. No independent semantic judge or source-display change was added.

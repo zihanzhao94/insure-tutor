@@ -7,6 +7,10 @@ Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings. Answers appear
 as validated paragraphs arrive, with compact reference links beside each claim.
 Hover or focus a reference for its filename and PDF page; click to open that page
 in another tab. Raw extracted passages are not expanded in the chat.
+The language selector changes the interface and fixed system notices only.
+The model chooses its response language from the latest user question by default,
+including an explicit preference in that question. Generated text is not translated or
+converted between Chinese scripts by the application.
 
 ## Quick start with Docker
 

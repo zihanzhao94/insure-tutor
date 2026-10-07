@@ -14,6 +14,9 @@ missing evidence, a bilingual table discrepancy, unrelated questions, personal
 buying advice and prompt injection, plus document overviews, paraphrased advice,
 topic changes after history, ambiguous input and legitimate exclusion questions.
 Page numbers are one-based PDF file pages.
+The case's `language` sets `ui_language` for fixed notices only. No target
+language is sent to generation; the model defaults to the latest user's question
+and can follow an explicit language preference there.
 
 The runner checks response status, at least one expected source page, selected
 answer phrases/numbers, and empty citations for refusals. A missing-detail case accepts either a refusal or an explicitly sourced

@@ -72,7 +72,7 @@ on the backend in environment configuration.
 
 The models have different jobs. The embedding model converts text into vectors
 for retrieval; it does not compose answers. The chat model explains the retrieved
-evidence in the requested language; it does not create the search index.
+evidence in a language it chooses from the question; it does not create the search index.
 
 The practical reason for keeping `gpt-4.1-mini` is its structured-output support
 and the functioning, evaluated baseline. The backend requests a strict JSON
@@ -259,9 +259,16 @@ heuristic avoids a separate question-rewriting model call, but can carry stale
 context into a short question on a new topic.
 
 The frontend lets the user choose English, Simplified Chinese or Traditional
-Chinese. The model is instructed to use that language; OpenCC normalizes Chinese
-terms for keyword matching and converts Chinese answer text to the selected
-script. Starting a new conversation or refreshing the interface starts a new
+Chinese for the interface. `ui_language` localizes fixed notices, including
+refusals and disclaimers; it is never included in the answer-generation prompt.
+The model defaults to the language/script of the latest end-user question and
+can follow an explicit language preference written there. English source text,
+history and internal validation feedback must not choose the response language.
+The repair prompt identifies itself as internal feedback and preserves the
+original question's language preference. Generated claims
+are preserved without translation, script conversion or language-detection rules.
+OpenCC still normalizes Chinese for retrieval/input rules and translates fixed
+notices. Starting a new conversation or refreshing the interface starts a new
 UI session. Stored session IDs provide separation, not access control.
 
 ## 7. Code boundaries and index lifecycle
