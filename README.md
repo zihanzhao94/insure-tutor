@@ -106,6 +106,8 @@ flowchart LR
 
 The editable module diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requirements.
+The [design and technology decisions](docs/design-decisions.md) explain the
+architecture, selection rationale, RAG parameters and implementation tradeoffs.
 
 ```text
 backend/app/
