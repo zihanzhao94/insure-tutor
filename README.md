@@ -4,6 +4,9 @@ A bilingual insurance tutor for the supplied **FLEXI-ULife Prime Saver** brochur
 Ask questions in English, Simplified Chinese, or Traditional Chinese; follow up
 in the same conversation; inspect source passages and open their original PDF
 pages. Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings.
+Source cards group references by PDF page while preserving citation numbers.
+Extracted text is collapsed by default and scrolls within a bounded panel;
+the original PDF page remains accessible without expanding the text.
 
 ## Quick start with Docker
 
@@ -102,7 +105,7 @@ flowchart LR
     API --> UI
 ```
 
-![InsureTutor answering with PDF references](docs/demo.png)
+![InsureTutor answering with grouped PDF references](docs/source-cards.jpg)
 
 The editable module diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requirements.

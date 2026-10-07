@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { getHealth, sendMessage } from "../api";
 import { copy } from "../copy";
-import type { ChatResponse, Health, Language } from "../types";
-import SourceCard from "./SourceCard";
+import type { ChatResponse, Citation, Health, Language } from "../types";
+import SourceCard, { type NumberedCitation } from "./SourceCard";
 interface Turn { question: string; response?: ChatResponse; }
+
+function groupSources(citations: Citation[]): NumberedCitation[][] {
+  // Group by PDF page while preserving the answer's citation numbers.
+  const pages = new Map<string, NumberedCitation[]>();
+  citations.forEach((citation, index) => {
+    const key = JSON.stringify([citation.filename, citation.pdf_page]);
+    const sources = pages.get(key) || [];
+    sources.push({ citation, number: index + 1 });
+    pages.set(key, sources);
+  });
+  return [...pages.values()];
+}
 export default function Chat({ language }: { language: Language }) {
   const t = copy(language);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -55,7 +67,7 @@ export default function Chat({ language }: { language: Language }) {
           {turn.response && <div className="answer"><div className="answer-header"><span className="message-label">{t.assistant}</span><span className={`answer-status ${turn.response.status}`}>{t.statuses[turn.response.status]}</span></div>
             {turn.response.mode === "extractive" && <p className="mode-label">{t.extracted}</p>}
             <div className="answer-text">{turn.response.answer}</div>
-            {!!turn.response.citations.length && <div className="sources"><h3>{t.sources}</h3>{turn.response.citations.map((citation, n) => <SourceCard key={`${citation.chunk_id}-${n}`} citation={citation} number={n + 1} language={language} />)}</div>}
+            {!!turn.response.citations.length && <div className="sources"><h3>{t.sources}</h3>{groupSources(turn.response.citations).map(sources => <SourceCard key={JSON.stringify([sources[0].citation.filename, sources[0].citation.pdf_page])} sources={sources} language={language} />)}</div>}
           </div>}
         </article>)}
         {busy && <div className="thinking" role="status"><span className="pulse" />{t.thinking}</div>}

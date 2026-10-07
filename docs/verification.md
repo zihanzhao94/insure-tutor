@@ -46,3 +46,12 @@ medical/claim exclusions and table layout. Known bilingual amounts are reported
 as inconsistent; detailed benefit-claim documentation is not inferred from
 surrender or cooling-off rules. A missing-information answer can either refuse
 or explicitly explain the absence with a source reference.
+
+## Source display update
+
+Also checked on 2026-10-07: frontend TypeScript/Vite builds passed locally and
+inside Docker after grouping source cards by PDF page. A browser question returned
+three references grouped into two page cards with the original numbers and PDF
+page links preserved. Expanded text had a 218px scrollable content area for
+1,800px of extracted text. Keyboard collapse and English/Simplified/Traditional
+Chinese source controls were verified. See [source-cards.jpg](source-cards.jpg).
