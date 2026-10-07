@@ -17,3 +17,7 @@ data/index/*
 data/sessions/*
 !data/sessions/.gitkeep
 evals/results/
+data/models/*
+!data/models/.gitkeep
+*.sqlite-wal
+*.sqlite-shm
