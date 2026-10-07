@@ -101,7 +101,6 @@ export default function Chat({ language }: { language: Language }) {
       {(!ready && !checking || healthError) && <div className="notice" role="status"><p>{healthError ? t.connection : health?.detail || t.setup}</p><button onClick={() => void checkHealth()} disabled={checking}>{t.retry}</button></div>}
       <div className="conversation" aria-live="polite" aria-busy={busy}>
         {!turns.length && <div className="welcome"><p className="eyebrow">{t.eyebrow}</p><h1>{t.title}</h1><p className="intro">{t.introduction}</p>
-          <p className="suggestions-label">{t.suggestions}</p><div className="suggestions">{t.examples.map(example => <button key={example} onClick={() => { setQuestion(example); input.current?.focus(); }}>{example}<span>↗</span></button>)}</div>
         </div>}
         {turns.map((turn, i) => {
           const answer = turn.response || turn.draft;
@@ -129,8 +128,11 @@ export default function Chat({ language }: { language: Language }) {
           : <button className="send-button" disabled={!ready || !question.trim()}>{t.send}<span>↑</span></button>}</div>
       </form>
     </section>
-    <aside className="document-panel"><p className="eyebrow">{t.sourceLibrary}</p><div className="document-icon" aria-hidden="true">PDF</div><h2>FLEXI-ULife<br />Prime Saver</h2><p className="document-type">{t.documentType}</p>
-      {health?.documents.map(filename => <a className="document-link" key={filename} href={`/api/documents/${encodeURIComponent(filename)}`} target="_blank" rel="noreferrer">{t.open} ↗</a>)}
+    <aside className="document-panel"><p className="eyebrow">{t.sourceLibrary}</p><div className="document-icon" aria-hidden="true">PDF</div>
+      {health?.documents.length ? health.documents.map(filename => <div className="indexed-document" key={filename}>
+        <h2>{filename}</h2><p className="document-type">{t.documentType}</p>
+        <a className="document-link" href={`/api/documents/${encodeURIComponent(filename)}`} target="_blank" rel="noreferrer">{t.open} ↗</a>
+      </div>) : <p className="document-type">{checking ? t.checking : t.noDocuments}</p>}
       <div className="side-note"><h3>{t.about}</h3><p>{t.aboutText}</p></div><p className="disclaimer">{t.note}</p>
     </aside>
   </div>;

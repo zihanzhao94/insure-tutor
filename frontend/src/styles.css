@@ -27,11 +27,6 @@ select { background: #fff; border: 1px solid #dce4dd; border-radius: 8px; paddin
 .eyebrow { font-size: 10px; color: #718776; font-weight: 700; letter-spacing: 1.65px; }
 h1 { font-family: Manrope, system-ui, sans-serif; font-weight: 700; font-size: clamp(26px, 3vw, 36px); line-height: 1.3; letter-spacing: -1.2px; margin: 14px 0; color: #213f37; }
 .intro { max-width: 485px; color: #728079; font-size: 14px; line-height: 1.8; }
-.suggestions-label { margin: 30px 0 11px; font-size: 11px; color: #8c968d; }
-.suggestions { display: flex; flex-direction: column; gap: 8px; }
-.suggestions button { display: flex; justify-content: space-between; align-items: center; text-align: left; padding: 12px 15px; border: 1px solid #e5eae2; border-radius: 9px; background: #fbfcf9; font-size: 12px; color: #415f50; }
-.suggestions button:hover { background: #f1f5ed; border-color: #bdcdb9; }
-.suggestions span { color: #829d87; margin-left: 10px; }
 .composer { padding: 19px 25px; border-top: 1px solid #edf0eb; }
 textarea { width: 100%; resize: vertical; min-height: 85px; max-height: 200px; border: 1px solid #dce4d9; background: #fcfdfb; border-radius: 10px; padding: 13px 15px; color: #264b3d; font-size: 13px; line-height: 1.6; }
 textarea::placeholder { color: #99a396; }
@@ -43,7 +38,8 @@ textarea::placeholder { color: #99a396; }
 .document-panel { padding: 26px 24px; background: #ebf0e5; border: 1px solid #e0e7d8; border-radius: 16px; }
 .document-panel .eyebrow { margin-top: 0; }
 .document-icon { margin: 26px 0 20px; width: 50px; height: 62px; background: #fff; border: 1px solid #d8e1cf; border-radius: 5px 13px 5px 5px; display: grid; place-items: center; font-size: 11px; letter-spacing: 1px; color: #54744b; box-shadow: 4px 4px 0 #dce6d2; }
-.document-panel h2 { font-family: Manrope, system-ui, sans-serif; font-size: 23px; line-height: 1.3; letter-spacing: -.8px; margin: 0 0 12px; color: #365332; }
+.document-panel h2 { font-family: Manrope, system-ui, sans-serif; font-size: 17px; line-height: 1.5; margin: 0 0 12px; color: #365332; overflow-wrap: anywhere; }
+.indexed-document + .indexed-document { border-top: 1px solid #d8e1cf; padding-top: 18px; }
 .document-type { font-size: 10px; color: #849078; }
 .document-link { display: inline-block; font-size: 12px; margin: 12px 0 23px; color: #4b7140; }
 .side-note { border-top: 1px solid #d8e1cf; padding-top: 18px; }
