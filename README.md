@@ -76,6 +76,10 @@ Use one ingestion process at a time. Restart after changing source files or
 chunk/model settings. Index replacement is atomic: failed embedding requests
 leave the previous vector index intact.
 
+The fingerprint tracks PDF contents, chunk settings, and embedding configuration.
+If extraction, splitting, or vector-processing code changes, use `--force` to
+rebuild; this demo does not maintain a separate index version.
+
 ## Architecture
 
 ```mermaid

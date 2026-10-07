@@ -15,9 +15,6 @@ from ..config import get_settings
 from ..model_client import embed_texts
 from ..schemas import DocumentChunk, DocumentPage
 
-# Bump when extraction, splitting logic, or index format changes require a rebuild.
-INDEX_VERSION = 1
-
 
 def load_pdf(pdf_path: Path) -> list[DocumentPage]:
     """Extract PDF text page by page, preserving filenames and one-based page numbers."""
@@ -74,7 +71,7 @@ def build_index(chunks: list[DocumentChunk], index_dir: Path, fingerprint: str =
                 (chunk.chunk_id, chunk.model_dump_json(), json.dumps(vector))
                 for chunk, vector in zip(chunks, vectors, strict=True)])
             metadata = {"embedding_model": settings.embedding_model, "embedding_backend": settings.embedding_backend,
-                        "dimension": str(len(vectors[0])), "fingerprint": fingerprint, "version": str(INDEX_VERSION)}
+                        "dimension": str(len(vectors[0])), "fingerprint": fingerprint}
             db.executemany("INSERT INTO metadata VALUES (?, ?)", metadata.items())
         temporary.replace(index_dir / "index.sqlite")
     finally:
@@ -88,11 +85,11 @@ def ensure_index(force: bool = False) -> dict[str, int | str]:
     if not files:
         raise ValueError("Put at least one PDF in data/raw/ before starting InsureTutor.")
     digest = hashlib.sha256()
-    # Fingerprint PDFs, chunk settings, embedding configuration, and index version.
+    # Fingerprint PDFs, chunk settings, and embedding configuration.
     for pdf in files:
         digest.update(pdf.name.encode())
         digest.update(pdf.read_bytes())
-    digest.update(f"{INDEX_VERSION}:{settings.chunk_size}:{settings.chunk_overlap}:{settings.embedding_backend}:{settings.embedding_model}".encode())
+    digest.update(f"{settings.chunk_size}:{settings.chunk_overlap}:{settings.embedding_backend}:{settings.embedding_model}".encode())
     fingerprint = digest.hexdigest()
     index_dir = settings.data_dir / "index"
     index_path = index_dir / "index.sqlite"
