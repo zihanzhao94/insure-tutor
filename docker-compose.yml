@@ -5,18 +5,25 @@ services:
     environment:
       DATA_DIR: /app/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data/raw:/app/data/raw:ro
       - ./data/processed:/app/data/processed
       - ./data/index:/app/data/index
       - ./data/sessions:/app/data/sessions
+      - ./data/models:/app/data/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health'))['index_ready']"]
+      interval: 15s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
 
   frontend:
     build: ./frontend
     environment:
       BACKEND_URL: http://backend:8000
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     depends_on:
       - backend

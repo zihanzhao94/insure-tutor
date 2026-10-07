@@ -1,60 +1,57 @@
 # InsureTutor
 
-Take-home task for AIDF: a bilingual insurance tutor with document-grounded
-answers, citations, and guardrails.
+A bilingual insurance tutor for the supplied **FLEXI-ULife Prime Saver** brochure.
+Ask questions in English, Simplified Chinese, or Traditional Chinese; follow up
+in the same conversation; inspect source passages and open their original PDF
+pages. Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings.
 
-## Current status
+## Quick start with Docker
 
-This repository is a project scaffold. The frontend shell, backend health
-endpoint, initial API contracts, and Docker configuration are present.
-RAG, conversation persistence, model integration, and guardrails are TODOs.
-`POST /api/chat` returns HTTP 501 until the pipeline is implemented.
-The language selector is a placeholder; translated UI and answers are TODOs.
-
-## Structure
-
-```text
-frontend/       React + TypeScript frontend (Vite)
-backend/app/    FastAPI API, chat orchestration, guardrails, storage
-backend/app/rag/  PDF ingestion, chunking, retrieval, generation
-backend/tests/  Future module and integration tests
-data/raw/      Original PDF source material
-data/processed/  Extracted passages and source metadata (generated)
-data/index/    Retrieval index (generated)
-data/sessions/ Conversation database (generated)
-evals/         Source-grounded evaluation cases and runner placeholder
-docs/          Assignment and editable architecture diagram
-```
-
-## Run with Docker
+Requires Docker Desktop / Docker Engine with Compose and an OpenAI API key.
 
 ```sh
 cp .env.example .env
+# Edit .env and set MODEL_API_KEY to your OpenAI API key.
 docker compose up --build
 ```
 
-- Frontend: http://localhost:5173
-- Backend API documentation: http://localhost:8000/docs
-- Health endpoint: http://localhost:8000/api/health
+- Chat: <http://localhost:5173>
+- API docs: <http://localhost:8000/docs>
+- Setup status: <http://localhost:8000/api/health>
 
-No model key is needed to run the scaffold. The frontend container runs the
-Vite development server for this demo scaffold. Generated data is persisted
-through bind mounts; original PDFs are mounted read-only.
+Startup automatically extracts the source PDF, builds embeddings, and persists
+the index. The initial startup requires API access; unchanged PDFs/settings
+reuse the saved index. Source PDFs are mounted read-only. Changes to `.env`
+require restarting the backend (`docker compose up -d --force-recreate backend`).
+The demo frontend uses the Vite development server.
+
+**Credentials stay on the backend.** PDFs, extracted text, vectors and session
+records are stored locally. OpenAI receives document text during embedding,
+and questions/retrieved passages during answering. This is not an offline model.
+Do not put sensitive documents into the demo without considering this data flow.
+
+Try:
+
+- “Is the 4% interest rate guaranteed?”
+- “停止缴付保费会怎样？”
+- “保單冷靜期有多久？從何時開始計算？”
+- “What is the minimum increase or decrease in sum insured?”
+- “What is the guaranteed account value?” → “And when does it apply?”
 
 ## Local development
 
-Python 3.11+ and a recent Node.js version are required (Node 22.12+ or 24).
-
-Backend, from the repository root:
+Use Python 3.11+ and Node 22.12+ or Node 24. From the repository root:
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
+cp .env.example .env  # Skip if you already configured .env.
+# Set MODEL_API_KEY in .env.
 uvicorn app.main:app --app-dir backend --reload --port 8000
 ```
 
-Frontend, in another terminal:
+In a second terminal:
 
 ```sh
 cd frontend
@@ -62,34 +59,170 @@ npm ci
 npm run dev
 ```
 
-Vite proxies `/api` requests to the backend. Docker sets `BACKEND_URL` to
-the backend service; local development defaults to `http://127.0.0.1:8000`.
-Local Python reads existing environment variables; to load `.env` later,
-export its values or add an explicit environment-file loader.
+Vite proxies `/api` to port 8000. Docker sets `BACKEND_URL` to its backend
+service. The backend loads the repository `.env`; explicitly exported variables
+have precedence. Never commit the real `.env`.
 
-## Architecture and next steps
+To rebuild manually or inspect extracted records:
 
-See [architecture.drawio](docs/architecture.drawio) and the
-[assignment](docs/TakeHomeTask-InsureTutor.md).
+```sh
+PYTHONPATH=backend .venv/bin/python -m app.rag.ingest --force
+# data/processed/pages.json and chunks.json contain inspectable source text.
+# Docker equivalent:
+docker compose exec backend python -m app.rag.ingest --force
+```
 
-The backend coordinates conversations, retrieval, generation, and input/output
-checks. Original PDFs, the retrieval index, and conversation storage are local.
-Model API access is isolated in `model_client.py`; choose the provider and
-embedding strategy when implementing ingestion.
+Use one ingestion process at a time. Restart after changing source files or
+chunk/model settings. Index replacement is atomic: failed embedding requests
+leave the previous vector index intact.
 
-1. Add source-grounded questions to `evals/questions.jsonl`.
-2. Parse the PDF and retain file identity, language, sections, and PDF page numbers.
-3. Implement section-aware chunks, including associated conditions and footnotes.
-4. Build the index and verify English/Chinese retrieval against the cases.
-5. Generate answers with citations resolved from source metadata.
-6. Add conversation history, input/output checks, and the frontend integration.
+## Architecture
 
-The supplied brochure is not the full policy contract. Missing information,
-non-guaranteed illustrations, and conflicting source statements must be handled
-explicitly in the completed tutor.
+```mermaid
+flowchart LR
+    PDF[Local PDF] -->|Extract pages and split chunks| Ingest[Offline ingestion]
+    Ingest -->|Embed text via OpenAI| Store[(Local SQLite vector index)]
+    UI[React chat] -->|Question and session ID| API[FastAPI / chat]
+    API -->|Input scope and misuse checks| RAG[RAG query]
+    History[(Local conversation SQLite)] <--> API
+    RAG <-->|Dense and lexical retrieval| Store
+    RAG -->|Question and retrieved passages| GPT[GPT API]
+    GPT -->|Structured claims and source IDs| Check[Evidence and number validation]
+    Check -->|Answer, source text and PDF pages| API
+    API --> UI
+```
 
-## Secrets and generated files
+![InsureTutor answering with PDF references](docs/demo.png)
 
-Copy `.env.example` to `.env` and keep model credentials on the backend.
-`.env`, generated indexes, processed text, sessions, and evaluation results are
-excluded from Git. Original source PDFs are kept under `data/raw/`.
+The editable module diagram is in [docs/architecture.drawio](docs/architecture.drawio).
+The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requirements.
+
+```text
+backend/app/
+├── main.py          API endpoints, PDF serving and startup indexing
+├── chat.py          Scope checks, follow-up context and conversation orchestration
+├── model_client.py  Provider calls and embeddings
+├── guardrails.py    Input rules, evidence validation and known-source conflict check
+├── storage.py       SQLite conversation history
+├── config.py        Environment settings
+├── schemas.py       Typed page, chunk, chat and model-output records
+└── rag/
+    ├── ingest.py    load_pdf → split_pages → build_index (offline)
+    └── query.py     load_index → retrieve → answer_question (online)
+frontend/src/        React chat, language selector and expandable source cards
+data/raw/            Original source PDF
+data/processed/      Extracted pages/chunks (generated; ignored)
+data/index/          SQLite vectors and metadata (generated; ignored)
+data/sessions/       Conversation database (generated; ignored)
+backend/tests/       Non-network unit/API tests
+evals/               Source-grounded API smoke cases and runner
+```
+
+### Key decisions
+
+- **Two RAG files.** Preparation and online queries have different lifecycles.
+  Splitting and vector-store access remain functions rather than separate
+  frameworks or a file per step.
+- **Page-preserving chunks.** `pypdf` extracts each page, including the supplied
+  PDF's empty-password encryption. LangChain's recursive character splitter
+  prefers paragraph/line and Chinese punctuation boundaries. Defaults are
+  1,000 **characters** with 150-character overlap; chunks never cross a page.
+  Document IDs, filenames and one-based **PDF file pages** stay attached.
+- **Simple local vector store.** SQLite stores text, normalized vectors and
+  model/fingerprint metadata. NumPy cosine similarity scans the small corpus;
+  a normalized keyword/Chinese-bigram score adds a 0.12 lexical signal.
+  `TOP_K=5` selects primary chunks, followed by complete matching pages and
+  Notes/disclosure pages up to a 17,000-character context budget. This preserves
+  footnotes that otherwise sit apart from benefit descriptions. The supplied
+  20-page brochure produces 53 chunks with the default settings.
+- **Server-owned citations.** GPT returns claims and source IDs using a strict JSON schema. The backend resolves
+  original passages, filenames, PDF page links and citation numbers. It rejects
+  unknown IDs, unverifiable quotes, unsupported numeric values and malformed
+  answers; rejected output becomes an insufficient-evidence response. Numeric
+  formatting such as `4` versus `4.0` is normalized.
+- **Conversation context.** Random session IDs isolate local SQLite histories.
+  Short/pronominal follow-ups include recent questions and the previous answer
+  as context, while factual support must still come from fresh retrieval. New
+  conversation clears the UI session. Refreshing starts a new conversation;
+  this demo has no user accounts or conversation browser.
+- **Layered guardrails.** Input checks reject common prompt injection, secrets,
+  fabricated citations, unrelated requests and personal buying recommendations.
+  The system prompt treats retrieved text as untrusted data and requires
+  evidence-backed claims. A narrowly scoped deterministic comparison flags the
+  known bilingual sum-insured-change table conflict. These controls reduce
+  failures; they do not prove semantic correctness.
+
+### Source-specific cautions
+
+The brochure is general reference, **not the full policy contract**. PDF page 8
+quotes assumed rates as of **January 2022**; they should not be described as
+current rates today. The 2.5% condition concerns accumulated account value after
+at least 15 years in force, rather than a guaranteed annual credited rate.
+
+On **PDF page 17**, the Chinese minimum increase/decrease row states
+USD 5,000 / HKD 40,000 / MOP 400,000; its English counterpart states
+USD 5,000 / HKD 400,000 / MOP 40,000. The tutor reports the discrepancy and asks
+for insurer confirmation rather than guessing a correction. Detailed benefit
+claim document lists and processing times are absent: claims links in the
+brochure are not evidence for those details.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MODEL_API_KEY` | empty | OpenAI API key; server-side only |
+| `MODEL_PROVIDER` | `openai` | Model API provider |
+| `MODEL_BASE_URL` | `https://api.openai.com/v1` | API base URL |
+| `CHAT_MODEL` | `gpt-4.1-mini` | Answer model |
+| `EMBEDDING_BACKEND` | `openai` | Vector embedding backend |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Same model for documents and queries |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Character splitting settings |
+| `TOP_K` | `5` | Primary retrieval count (expanded context can include more) |
+| `AUTO_INGEST` | `true` | Build/reuse index on startup |
+| `CHAT_MODE` | `llm` | `extractive` displays source passages without chat generation |
+
+OpenAI embeddings still call the API in `extractive` mode. If testing the
+optional Claude adapter, use `MODEL_PROVIDER=anthropic`, its native base URL and
+chat model, and `EMBEDDING_BACKEND=local` with
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. This requires a
+local embedding-model download/cache and a complete index rebuild; it is not
+the default tested submission configuration.
+
+## Verification
+
+```sh
+.venv/bin/pip install -r backend/requirements-dev.txt
+.venv/bin/python -m pytest backend/tests -q
+cd frontend && npm run build
+```
+
+With the backend running (uses the configured model API):
+
+```sh
+.venv/bin/python evals/run_eval.py
+```
+
+The evaluation set covers rates, charges/lapse, cooling-off, withdrawal and
+illness conditions, follow-ups, three languages, missing evidence, bilingual
+conflicts and misuse. Reports under `evals/results/` are ignored. The automated
+checks are smoke checks of statuses, source pages and selected phrases; manually
+review source support and all conditions. See [evals/README.md](evals/README.md).
+
+Recorded checks: [docs/verification.md](docs/verification.md).
+
+## Limits and troubleshooting
+
+- This demo supports digitally extractable PDFs, not scanned-document OCR.
+  PDF table extraction can lose layout or glyphs. Review source pages when
+  tables or translations conflict.
+- SQLite/NumPy full scans fit this tiny corpus; a large document collection
+  needs a vector database/index, stronger reranking and targeted footnote links.
+- Deterministic guards and one grounded model call are not a general safety
+  verifier. Exact source IDs/quotes and numeric checks establish provenance,
+  not logical entailment. Broader adversarial testing remains necessary.
+- The interface displays setup/API errors without exposing credentials.
+  HTTP 401 usually means a rejected key; 429 may indicate quota/rate limits.
+  Configure the key and restart; use `/api/health` to check readiness.
+- The demo has no authentication, request rate limiting or session ownership
+  checks. Run it locally. Deployment requires those controls and a production
+  frontend server.
