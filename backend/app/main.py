@@ -1,14 +1,15 @@
 """FastAPI endpoints and startup indexing."""
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from .chat import handle_chat
+from .chat import handle_chat, stream_chat
 from .config import get_settings
 from .model_client import ModelError
 from .rag.ingest import ensure_index
@@ -78,3 +79,23 @@ def document(filename: str):
     if path.parent != directory or path.suffix.lower() != ".pdf" or not path.is_file():
         raise HTTPException(status_code=404, detail="Document not found.")
     return FileResponse(path, media_type="application/pdf")
+
+
+@app.post("/api/chat/stream")
+def chat_stream(request: ChatRequest):
+    """Send validated answer increments and a final response as SSE frames."""
+    def events():
+        try:
+            for event in stream_chat(request):
+                yield _sse(event["event"], event["data"])
+        except (ModelError, FileNotFoundError, ValueError) as exc:
+            yield _sse("error", {"detail": str(exc)})
+        except Exception:
+            logger.exception("Chat stream failed")
+            yield _sse("error", {"detail": "The answer could not be completed. Please try again."})
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _sse(event, data):
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"

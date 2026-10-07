@@ -1,5 +1,6 @@
 """Shared model calls: native Claude/OpenAI APIs and local multilingual embeddings."""
 
+import json
 from functools import lru_cache
 from threading import Lock
 
@@ -23,15 +24,20 @@ def _post(url: str, headers: dict, body: dict) -> dict:
                               timeout=httpx.Timeout(75, connect=15))
     except httpx.HTTPError as exc:
         raise ModelError("Cannot reach the model API. Check MODEL_BASE_URL and your connection.") from exc
+    _check_status(response)
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise ModelError("Model API returned an invalid response.") from exc
+
+
+def _check_status(response):
+    """Keep provider errors safe without exposing response bodies or credentials."""
     if response.status_code != 200:
         categories = {401: "API key rejected", 403: "access denied", 404: "model or endpoint not found",
                       429: "quota or rate limit reached", 529: "provider temporarily overloaded"}
         reason = categories.get(response.status_code, "provider request failed")
         raise ModelError(f"Model API: {reason} (HTTP {response.status_code}).")
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise ModelError("Model API returned an invalid response.") from exc
 
 
 @lru_cache(maxsize=2)
@@ -90,6 +96,67 @@ def _normalize(vectors) -> list[list[float]]:
 def generate_answer(messages: list[dict[str, str]]) -> str:
     """Generate claims using the grounded-answer schema."""
     return generate_json(messages, ANSWER_JSON_SCHEMA, "grounded_answer", max_tokens=2200)
+
+
+def stream_answer(messages: list[dict[str, str]]):
+    """Yield OpenAI JSON text deltas; require a complete, normally finished stream."""
+    settings = get_settings()
+    if settings.model_provider != "openai":
+        # The optional Claude path retains its existing buffered implementation.
+        yield generate_answer(messages)
+        return
+    if not settings.model_api_key:
+        raise ModelError("Set MODEL_API_KEY in .env to enable generated answers.")
+    if settings.model_api_key.startswith("sk-ant-"):
+        raise ModelError("Replace the Claude key in .env with your OpenAI API key.")
+    body = {"model": settings.chat_model, "messages": messages, "stream": True,
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": "grounded_answer", "strict": True, "schema": ANSWER_JSON_SCHEMA}},
+            "temperature": 0, "max_tokens": 2200}
+    finished, done, has_text = False, False, False
+    try:
+        with httpx.stream("POST", settings.model_base_url + "/chat/completions",
+                          headers={"Authorization": "Bearer " + settings.model_api_key},
+                          json=body, timeout=httpx.Timeout(75, connect=15)) as response:
+            _check_status(response)
+            for line in response.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if raw == "[DONE]":
+                    done = True
+                    break
+                try:
+                    data = json.loads(raw)
+                    if data.get("error"):
+                        raise ModelError("Model API returned a streaming error.")
+                    choices = data["choices"]
+                    if not choices:
+                        continue  # Optional usage-only record.
+                    choice = choices[0]
+                    delta = choice["delta"]
+                    if delta.get("refusal"):
+                        raise ModelError("The model declined this answer. Please rephrase your question.")
+                    content = delta.get("content")
+                    if content is not None:
+                        if not isinstance(content, str) or finished:
+                            raise ValueError("Unexpected stream content")
+                        if content:
+                            has_text = True
+                            yield content
+                    reason = choice.get("finish_reason")
+                    if reason == "length":
+                        raise ModelError("The answer was truncated. Please ask a narrower question.")
+                    if reason is not None:
+                        if reason != "stop":
+                            raise ModelError("The model could not complete the answer. Please rephrase your question.")
+                        finished = True
+                except (ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+                    raise ModelError("OpenAI returned an unexpected stream format.") from exc
+    except httpx.HTTPError as exc:
+        raise ModelError("Cannot reach the model API. Check MODEL_BASE_URL and your connection.") from exc
+    if not done or not finished or not has_text:
+        raise ModelError("The model stream ended before the answer was complete. Please try again.")
 
 
 def generate_json(messages: list[dict[str, str]], schema: dict, name: str, *, max_tokens: int) -> str:

@@ -16,7 +16,7 @@ from opencc import OpenCC
 
 from ..config import get_settings
 from ..guardrails import localize, message, source_conflict, validate_answer
-from ..model_client import ModelError, embed_texts, generate_answer
+from ..model_client import ModelError, embed_texts, generate_answer, stream_answer
 from ..schemas import Citation, DocumentChunk, GeneratedAnswer, Language
 
 _converter = OpenCC("t2s")
@@ -176,26 +176,14 @@ if that rate had applied, including total interest and Extra Bonus, after at lea
 """
 
 
-def answer_question(question: str, language: Language, index_dir: Path,
-                    *, top_k: int | None = None, overview: bool = False) -> tuple[str, list[Citation], str]:
-    """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
-    settings = get_settings()
-    evidence = retrieve_overview(index_dir) if overview else retrieve(question, index_dir, top_k or settings.top_k)
-    if not evidence:
-        return message("insufficient_evidence", language), [], "insufficient_evidence"
-    if settings.chat_mode == "extractive":
-        citations = [_citation(chunk, chunk.text) for chunk in evidence[:3]]
-        text = message("extractive", language) + "\n\n" + "\n\n".join(
-            f"[{i}] {citation.excerpt}" for i, citation in enumerate(citations, 1))
-        return text, citations, "answered"
+def _answer_messages(question, language, evidence, overview):
+    """Use the same grounding instructions for buffered and streamed answers."""
     prompt = json.dumps({"language": language, "question": question,
                          "passages": [{"chunk_id": c.chunk_id, "pdf_page": c.pdf_page, "text": c.text}
                                       for c in evidence]}, ensure_ascii=False)
-    answer = source_conflict(question, evidence, language)
-    if answer is None:
-        instruction = SYSTEM_PROMPT
-        if overview:
-            instruction += """\nGive an educational overview with one topic per claim, in this order:
+    instruction = SYSTEM_PROMPT
+    if overview:
+        instruction += """\nGive an educational overview with one topic per claim, in this order:
 benefits; premiums/monthly charges and lapse; interest/guarantees; withdrawals and
 early surrender; cooling-off cancellation; exclusions. Include only supported
 facts and cite every passage needed for each claim's numbers and conditions.
@@ -210,28 +198,60 @@ Preserve whether a waiting-period condition applies to the underlying disease
 or injury occurring, rather than substituting the date of terminal diagnosis.
 Explain risks without recommending purchase.
 """
-        messages = [{"role": "system", "content": instruction},
-                    {"role": "user", "content": prompt}]
+    return [{"role": "system", "content": instruction}, {"role": "user", "content": prompt}]
+
+
+def _repair_messages(messages, raw):
+    """Request one corrected overview without inventing missing evidence."""
+    messages.extend([
+        {"role": "assistant", "content": raw},
+        {"role": "user", "content": "The answer failed source/number validation. Return corrected JSON. "
+         "Check EVERY number and condition against the exact cited chunks. Add the needed supplied "
+         "source IDs, or remove unsupported statements. Do not invent sources or facts."},
+    ])
+
+
+def _parse_answer(raw, evidence):
+    """Validate complete JSON and apply the existing source and number checks."""
+    stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+    answer = GeneratedAnswer.model_validate_json(stripped)
+    validate_answer(answer, evidence)
+    return answer
+
+
+def answer_question(question: str, language: Language, index_dir: Path,
+                    *, top_k: int | None = None, overview: bool = False) -> tuple[str, list[Citation], str]:
+    """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
+    settings = get_settings()
+    evidence = retrieve_overview(index_dir) if overview else retrieve(question, index_dir, top_k or settings.top_k)
+    if not evidence:
+        return message("insufficient_evidence", language), [], "insufficient_evidence"
+    if settings.chat_mode == "extractive":
+        citations = [_citation(chunk, chunk.text) for chunk in evidence[:3]]
+        text = message("extractive", language) + "\n\n" + "\n\n".join(
+            f"[{i}] {citation.excerpt}" for i, citation in enumerate(citations, 1))
+        return text, citations, "answered"
+    answer = source_conflict(question, evidence, language)
+    if answer is None:
+        messages = _answer_messages(question, language, evidence, overview)
         # Broad summaries can omit a needed source ID; allow one bounded repair.
         for attempt in range(2 if overview else 1):
             raw = generate_answer(messages)
             try:
-                stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
-                answer = GeneratedAnswer.model_validate_json(stripped)
-                validate_answer(answer, evidence)
+                answer = _parse_answer(raw, evidence)
                 break
             except (ValueError, TypeError):
-                messages.extend([
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": "The answer failed source/number validation. Return corrected JSON. "
-                     "Check EVERY number and condition against the exact cited chunks. Add the needed supplied "
-                     "source IDs, or remove unsupported statements. Do not invent sources or facts."},
-                ])
+                _repair_messages(messages, raw)
         else:
             # Fail closed even if the repair still contains unverifiable claims.
             return message("insufficient_evidence", language), [], "insufficient_evidence"
     else:
         validate_answer(answer, evidence)
+    return _render_answer(answer, evidence, language)
+
+
+def _render_answer(answer, evidence, language, *, disclaimer=True):
+    """Assign stable citation numbers from server-owned metadata."""
     if answer.status == "insufficient_evidence":
         return message("insufficient_evidence", language), [], answer.status
     sources = {c.chunk_id: c for c in evidence}
@@ -247,5 +267,91 @@ Explain risks without recommending purchase.
         lines.append(localize(claim.text, language) + " " + "".join(markers))
     if answer.status == "conflict":
         lines.insert(0, message("conflict", language))
-    lines.append(message("disclaimer", language))
+    if disclaimer:
+        lines.append(message("disclaimer", language))
     return "\n\n".join(lines), citations, answer.status
+
+
+def _completed_claims(raw):
+    """Decode closed JSON claim objects, including escaped quotes and braces."""
+    start = re.match(r'^\s*\{\s*"status"\s*:\s*"(answered|conflict|insufficient_evidence)"'
+                     r'\s*,\s*"claims"\s*:\s*\[', raw)
+    if not start:
+        return None, []  # Other key orders are handled by final validation.
+    position, claims = start.end(), []
+    decoder = json.JSONDecoder()
+    while len(claims) < 6:
+        while position < len(raw) and raw[position].isspace():
+            position += 1
+        if position >= len(raw) or raw[position] != "{":
+            break
+        try:
+            claim, position = decoder.raw_decode(raw, position)
+        except ValueError:
+            break
+        claims.append(claim)
+        while position < len(raw) and raw[position].isspace():
+            position += 1
+        if position >= len(raw) or raw[position] != ",":
+            break
+        position += 1
+    return start[1], claims
+
+
+def _result_event(answer, citations, status):
+    return {"event": "result", "data": {"answer": answer, "status": status,
+            "citations": [citation.model_dump() for citation in citations]}}
+
+
+def stream_answer_question(question: str, language: Language, index_dir: Path,
+                           *, top_k: int | None = None, overview: bool = False):
+    """Stream validated claims; a complete final result remains authoritative."""
+    settings = get_settings()
+    if settings.chat_mode == "extractive":
+        yield _result_event(*answer_question(question, language, index_dir, top_k=top_k, overview=overview))
+        return
+    evidence = retrieve_overview(index_dir) if overview else retrieve(question, index_dir, top_k or settings.top_k)
+    if not evidence:
+        yield _result_event(message("insufficient_evidence", language), [], "insufficient_evidence")
+        return
+    answer = source_conflict(question, evidence, language)
+    if answer is not None:
+        validate_answer(answer, evidence)
+        yield _result_event(*_render_answer(answer, evidence, language))
+        return
+    messages = _answer_messages(question, language, evidence, overview)
+    for attempt in range(2 if overview else 1):
+        if attempt:
+            yield {"event": "reset", "data": {}}
+        yield {"event": "status", "data": {"phase": "generating"}}
+        raw, displayed, count, invalid_prefix = "", "", 0, False
+        for delta in stream_answer(messages):
+            raw += delta
+            status, claims = _completed_claims(raw)
+            if invalid_prefix or status not in {"answered", "conflict"} or len(claims) <= count:
+                continue
+            try:
+                partial = GeneratedAnswer.model_validate({"status": status, "claims": claims})
+                validate_answer(partial, evidence)
+                text, citations, _ = _render_answer(partial, evidence, language, disclaimer=False)
+            except (ValueError, TypeError):
+                invalid_prefix = True
+                continue
+            count = len(claims)
+            yield {"event": "delta", "data": {"text": text[len(displayed):],
+                   "citations": [citation.model_dump() for citation in citations]}}
+            displayed = text
+        # Never store a prefix or treat a disconnected provider as a final answer.
+        yield {"event": "status", "data": {"phase": "checking"}}
+        try:
+            answer = _parse_answer(raw, evidence)
+        except (ValueError, TypeError):
+            _repair_messages(messages, raw)
+            continue
+        text, citations, status = _render_answer(answer, evidence, language)
+        if status != "insufficient_evidence" and text.startswith(displayed):
+            yield {"event": "delta", "data": {"text": text[len(displayed):],
+                   "citations": [citation.model_dump() for citation in citations]}}
+        yield _result_event(text, citations, status)
+        return
+    yield _result_event(message("insufficient_evidence", language), [], "insufficient_evidence")
