@@ -15,7 +15,7 @@ const en = {
   about: "One document. Clear references.", aboutText: "Each answer links back to its evidence. Page numbers refer to the PDF file, starting at page 1.",
   note: "For understanding the brochure. Full policy terms govern the cover; this tutor does not provide personal insurance advice.",
   local: "PDF, index and conversation history are stored locally. Relevant passages and questions are sent to the configured model API.",
-  statuses: { answered: "Source-supported", insufficient_evidence: "More evidence needed", out_of_scope: "Outside scope", blocked: "Request declined", conflict: "Source discrepancy" },
+  statuses: { answered: "Source-supported", insufficient_evidence: "More evidence needed", out_of_scope: "Outside scope", blocked: "Request declined", conflict: "Source discrepancy", clarification_required: "Please clarify" },
 };
 const hans: typeof en = {
   sourceLibrary: "来源文档", documentType: "产品宣传册 · English / 中文",
@@ -33,7 +33,7 @@ const hans: typeof en = {
   about: "一份文档，出处清晰。", aboutText: "每条回答均可查看对应原文。页码从 PDF 文件的第 1 页开始计算。",
   note: "用于理解宣传册，完整保障以保单条款为准。本工具不提供个人投保建议。",
   local: "PDF、索引和对话记录保存在本地；相关段落和问题会发送至配置的模型 API。",
-  statuses: { answered: "附有原文依据", insufficient_evidence: "证据不足", out_of_scope: "超出范围", blocked: "请求已拒绝", conflict: "来源存在差异" },
+  statuses: { answered: "附有原文依据", insufficient_evidence: "证据不足", out_of_scope: "超出范围", blocked: "请求已拒绝", conflict: "来源存在差异", clarification_required: "请补充说明" },
 };
 const hant: typeof en = {
   ...hans, sourceLibrary: "來源文檔", documentType: "產品宣傳冊 · English / 中文", subtitle: "讀懂保險條款", language: "回答語言", newChat: "新對話",
@@ -50,6 +50,6 @@ const hant: typeof en = {
   about: "一份文檔，出處清晰。", aboutText: "每條回答均可查看對應原文。頁碼從 PDF 檔案的第 1 頁開始計算。",
   note: "用於理解宣傳冊，完整保障以保單條款為準。本工具不提供個人投保建議。",
   local: "PDF、索引和對話記錄保存在本地；相關段落和問題會發送至配置的模型 API。",
-  statuses: { answered: "附有原文依據", insufficient_evidence: "證據不足", out_of_scope: "超出範圍", blocked: "請求已拒絕", conflict: "來源存在差異" },
+  statuses: { answered: "附有原文依據", insufficient_evidence: "證據不足", out_of_scope: "超出範圍", blocked: "請求已拒絕", conflict: "來源存在差異", clarification_required: "請補充說明" },
 };
 export const copy = (language: Language) => ({ en, "zh-Hans": hans, "zh-Hant": hant })[language];

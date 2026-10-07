@@ -6,7 +6,7 @@ export interface Citation {
 export interface ChatRequest { message: string; language: Language; session_id?: string; }
 export interface ChatResponse {
   answer: string; language: Language; session_id: string; citations: Citation[];
-  status: "answered" | "insufficient_evidence" | "out_of_scope" | "blocked" | "conflict";
+  status: "answered" | "insufficient_evidence" | "out_of_scope" | "blocked" | "conflict" | "clarification_required";
   mode: "llm" | "extractive";
 }
 export interface Health {

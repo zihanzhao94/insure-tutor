@@ -40,7 +40,7 @@ flowchart LR
     end
     Ingest <-->|Chunk text / vectors| Embedding
     API <-->|Question text / vector| Embedding
-    API <-->|Question and evidence / structured claims| Chat
+    API <-->|Intent classification and grounded claims| Chat
 ```
 
 Docker Compose runs two services: the frontend and backend. Ingestion is a
@@ -136,9 +136,11 @@ cleanup is not a general header/footer or relevance classifier.
 
 ### Answering a question
 
-1. Validate the request and run input scope/misuse checks.
+1. Validate the request and run common misuse rules. In generated-answer mode,
+   classify intent with a separate short model call and route using fixed code.
 2. Add recent context for short or pronoun-based follow-ups, then embed the
-   retrieval question.
+   retrieval question. Overviews instead retrieve five fixed brochure topics,
+   interleave sources and deduplicate them within the existing context budget.
 3. Ask Chroma for cosine distances and combine semantic similarity with a
    lightweight keyword score.
 4. Select primary chunks and add supporting page text within the context budget.
@@ -177,7 +179,7 @@ confidence score.
 
 | Layer | Implemented control | Limitation |
 |---|---|---|
-| Before retrieval | Rules check common injection, secrets, unrelated topics and personal buying advice | Pattern-based checks can miss paraphrases or reject legitimate input |
+| Before retrieval | Common misuse rules plus AI intent classification and fixed category routing | Both patterns and the classifier can misjudge meaning |
 | During generation | Prompt restricts answers to supplied evidence and treats passages as untrusted data | Instructions alone cannot guarantee compliance |
 | After generation | Pydantic validation, known source IDs, verifiable quotes and numeric support checks | Matching numbers and sources does not prove that the claim logically follows |
 | Source conflict | Deterministic comparison of the brochure's bilingual sum-insured-change row | Covers this known table pattern, not arbitrary document contradictions |
@@ -187,6 +189,26 @@ passages, filenames, page links and citation markers. Invalid or unsupported
 output becomes an insufficient-evidence response rather than being displayed.
 This prevents invented citation locations while keeping source support open to
 review. It does not replace semantic evaluation of the answer.
+
+The classifier returns only `document_qa`, `document_overview`, `personal_advice`,
+`out_of_scope`, `blocked` or `uncertain`. It uses the existing chat model with an
+80-token output budget and strict OpenAI JSON schema; Pydantic validates labels.
+Recent conversation resolves references but does not authorize unrelated topics.
+Clear requests such as "What are the important terms in this document?" proceed
+without insurance keywords. Unknown/malformed labels and provider failures return
+a safe API error rather than asking the user to clarify or allowing unchecked RAG.
+Unclear input is distinct from a clear question whose answer is absent from the PDF.
+Clarification turns are saved so the next question can supply the missing context.
+
+This adds one chat-model call before generated answers; no separate AI output
+judge or agent framework is introduced. Document overviews include summary-table
+pages located by their at-a-glance heading, retrieve five fixed topics and
+interleave their sources within the same 17,000-character limit.
+The topic list is specific to this brochure and does not guarantee complete
+coverage. Extractive mode skips classification and retains keyword scope rules.
+An overview that fails source/number validation gets one generation repair attempt
+using the same evidence and validation. A second failure still returns insufficient
+evidence. This is a bounded formatting/citation repair, not a semantic AI judge.
 
 Source-specific instructions distinguish the January 2022 assumed rate from
 today's rates and the 15-year accumulated-value guarantee from an annual credited
@@ -218,7 +240,7 @@ UI session. Stored session IDs provide separation, not access control.
 | `rag/ingest.py` | PDF extraction, splitting, embeddings and index publication |
 | `rag/query.py` | Chroma access, retrieval, context expansion and grounded answers |
 | `model_client.py` | Model API calls, embedding normalization and safe provider errors |
-| `guardrails.py` | Scope rules, evidence checks, language conversion and known conflict detection |
+| `guardrails.py` | AI intent classification, misuse rules, evidence checks and known conflict detection |
 | `storage.py` | SQLite message persistence |
 | `schemas.py` / `config.py` | Typed records, output schema and environment settings |
 

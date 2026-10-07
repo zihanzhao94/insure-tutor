@@ -38,7 +38,7 @@ def main():
                 checks = {"status": body["status"] in case["statuses"],
                           "source_page": not case["source_pages"] or bool(set(pages) & set(case["source_pages"])),
                           "expected_points": not missing,
-                          "refusal_has_no_citations": body["status"] not in {"blocked", "out_of_scope", "insufficient_evidence"} or not body["citations"]}
+                          "refusal_has_no_citations": body["status"] not in {"blocked", "out_of_scope", "insufficient_evidence", "clarification_required"} or not body["citations"]}
                 result = {"id": case["id"], "passed": all(checks.values()), "checks": checks,
                           "source_pages": pages, "missing_points": missing, "response": body}
             except (httpx.HTTPError, ValueError, KeyError) as error:

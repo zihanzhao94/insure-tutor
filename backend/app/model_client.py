@@ -88,7 +88,12 @@ def _normalize(vectors) -> list[list[float]]:
 
 
 def generate_answer(messages: list[dict[str, str]]) -> str:
-    """Call the configured chat model; OpenAI output follows the strict answer JSON schema."""
+    """Generate claims using the grounded-answer schema."""
+    return generate_json(messages, ANSWER_JSON_SCHEMA, "grounded_answer", max_tokens=2200)
+
+
+def generate_json(messages: list[dict[str, str]], schema: dict, name: str, *, max_tokens: int) -> str:
+    """Call the configured chat model with a task-specific JSON schema and token limit."""
     settings = get_settings()
     if not settings.model_api_key:
         raise ModelError("Set MODEL_API_KEY in .env to enable generated answers.")
@@ -99,8 +104,8 @@ def generate_answer(messages: list[dict[str, str]]) -> str:
                      {"Authorization": "Bearer " + settings.model_api_key},
                      {"model": settings.chat_model, "messages": messages,
                       "response_format": {"type": "json_schema", "json_schema": {
-                          "name": "grounded_answer", "strict": True, "schema": ANSWER_JSON_SCHEMA}},
-                      "temperature": 0, "max_tokens": 2200})
+                          "name": name, "strict": True, "schema": schema}},
+                      "temperature": 0, "max_tokens": max_tokens})
         try:
             choice = data["choices"][0]
             if choice["finish_reason"] == "length":
@@ -116,7 +121,7 @@ def generate_answer(messages: list[dict[str, str]]) -> str:
     base = settings.model_base_url
     data = _post(base + ("/messages" if base.endswith("/v1") else "/v1/messages"),
                  {"x-api-key": settings.model_api_key, "anthropic-version": "2023-06-01"},
-                 {"model": settings.chat_model, "max_tokens": 2200,
+                 {"model": settings.chat_model, "max_tokens": max_tokens,
                   "system": system, "messages": conversation})
     try:
         if data.get("stop_reason") == "max_tokens":

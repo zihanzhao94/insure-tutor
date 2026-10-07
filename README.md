@@ -96,7 +96,9 @@ flowchart LR
     PDF[Local PDF] -->|Extract pages and split chunks| Ingest[Offline ingestion]
     Ingest -->|Embed text via OpenAI| Store[(Local Chroma vector store)]
     UI[React chat] -->|Question and session ID| API[FastAPI / chat]
-    API -->|Input scope and misuse checks| RAG[RAG query]
+    API -->|Misuse rules and AI intent classification| Intent[Fixed category routing]
+    Intent -->|Question or overview| RAG[RAG query]
+    Intent -->|Advice, unrelated, blocked or unclear| API
     History[(Local conversation SQLite)] <--> API
     RAG <-->|Cosine query and chunk metadata| Store
     RAG -->|Question and retrieved passages| GPT[GPT API]
@@ -117,7 +119,7 @@ backend/app/
 ├── main.py          API endpoints, PDF serving and startup indexing
 ├── chat.py          Scope checks, follow-up context and conversation orchestration
 ├── model_client.py  Provider calls and embeddings
-├── guardrails.py    Input rules, evidence validation and known-source conflict check
+├── guardrails.py    AI intent classification, input rules and evidence validation
 ├── storage.py       SQLite conversation history
 ├── config.py        Environment settings
 ├── schemas.py       Typed page, chunk, chat and model-output records
@@ -180,8 +182,20 @@ evals/               Source-grounded API smoke cases and runner
   as context, while factual support must still come from fresh retrieval. New
   conversation clears the UI session. Refreshing starts a new conversation;
   this demo has no user accounts or conversation browser.
-- **Layered guardrails.** Input checks reject common prompt injection, secrets,
-  fabricated citations, unrelated requests and personal buying recommendations.
+- **Layered guardrails.** Rules block common override/secret/fabrication attempts.
+  A separate short call to the configured chat model returns a validated intent
+  category, using recent conversation for follow-ups. Fixed code routes document
+  questions to RAG and rejects unrelated/personal-advice requests. Unclear input
+  requests clarification. Provider errors and malformed labels are reported as
+  API failures and never allow retrieval. Clear questions do not need an insurance
+  keyword, and missing source evidence is decided after retrieval.
+  Overviews include the brochure's at-a-glance table and retrieve five fixed
+  topics (benefits, premiums/charges, cancellation, interest and exclusions).
+  They interleave/deduplicate sources and keep the same
+  17,000-character budget. This adds five query embeddings rather than one.
+  If a generated overview fails source/number validation, the model may correct
+  it once; the same validation must pass before any answer is displayed.
+  Extractive mode retains keyword scope checks and skips AI classification.
   The system prompt treats retrieved text as untrusted data and requires
   evidence-backed claims. A narrowly scoped deterministic comparison flags the
   known bilingual sum-insured-change table conflict. These controls reduce
@@ -254,7 +268,7 @@ Recorded checks: [docs/verification.md](docs/verification.md).
   brochure corpus. A large collection needs bounded Chroma candidates, stronger
   reranking and targeted footnote links. `PersistentClient` is for this local
   demo; shared production deployment should use a server-backed database.
-- Deterministic guards and one grounded model call are not a general safety
+- AI intent classification, deterministic guards and grounded generation are not a general safety
   verifier. Exact source IDs/quotes and numeric checks establish provenance,
   not logical entailment. Broader adversarial testing remains necessary.
 - The interface displays setup/API errors without exposing credentials.

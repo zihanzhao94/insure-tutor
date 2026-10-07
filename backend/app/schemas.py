@@ -2,9 +2,25 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Language = Literal["en", "zh-Hans", "zh-Hant"]
+QuestionCategory = Literal["document_qa", "document_overview", "personal_advice", "out_of_scope", "blocked", "uncertain"]
+
+
+class QuestionIntent(BaseModel):
+    """A routing label, not an answer or proof that the PDF contains evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+    category: QuestionCategory
+
+
+INTENT_JSON_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["category"],
+    "properties": {"category": {"type": "string", "enum": [
+        "document_qa", "document_overview", "personal_advice", "out_of_scope", "blocked", "uncertain"
+    ]}},
+}
 
 
 class DocumentPage(BaseModel):
@@ -44,7 +60,7 @@ class ChatResponse(BaseModel):
     language: Language
     session_id: str
     citations: list[Citation] = Field(default_factory=list)
-    status: Literal["answered", "insufficient_evidence", "out_of_scope", "blocked", "conflict"] = "answered"
+    status: Literal["answered", "insufficient_evidence", "out_of_scope", "blocked", "conflict", "clarification_required"] = "answered"
     mode: Literal["llm", "extractive"] = "llm"
 
 

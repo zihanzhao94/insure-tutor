@@ -5,6 +5,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
+from itertools import zip_longest
 from pathlib import Path
 from urllib.parse import quote
 
@@ -117,6 +118,30 @@ def _citation(chunk: DocumentChunk, excerpt: str) -> Citation:
                     url=f"/api/documents/{quote(chunk.filename, safe='')}#page={chunk.pdf_page}")
 
 
+def retrieve_overview(index_dir: Path) -> list[DocumentChunk]:
+    """Include the brochure's summary table and interleave five topics within the context budget."""
+    index = load_index(index_dir)
+    summary_pages = {(c.document_id, c.pdf_page) for c in index.chunks
+                     if re.search(r"\bat a glance\b|一覽表|一览表", c.text, re.I)}
+    summary = [c for c in index.chunks if (c.document_id, c.pdf_page) in summary_pages]
+    topics = [
+        "Death Benefit Options Terminal Illness Benefit Unemployment Protection",
+        "premium payment period monthly charges grace period policy termination",
+        "withdrawal surrender cooling-off cancellation charges",
+        "assumed non-guaranteed interest minimum guaranteed account value fifteen years",
+        "exclusions suicide incontestability key product disclosures",
+    ]
+    groups = [summary] + [retrieve(topic, index_dir, top_k=2) for topic in topics]
+    result, seen, size = [], set(), 0
+    for row in zip_longest(*groups):
+        for chunk in row:
+            if chunk is not None and chunk.chunk_id not in seen and size + len(chunk.text) <= 17000:
+                result.append(chunk)
+                seen.add(chunk.chunk_id)
+                size += len(chunk.text)
+    return result
+
+
 SYSTEM_PROMPT = """You are InsureTutor, an educational tutor for the supplied insurance brochure.
 Use ONLY the supplied passages as factual evidence. The brochure is not the full
 policy contract and does not necessarily describe today's rates. Never invent
@@ -152,10 +177,10 @@ if that rate had applied, including total interest and Extra Bonus, after at lea
 
 
 def answer_question(question: str, language: Language, index_dir: Path,
-                    *, top_k: int | None = None) -> tuple[str, list[Citation], str]:
+                    *, top_k: int | None = None, overview: bool = False) -> tuple[str, list[Citation], str]:
     """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
     settings = get_settings()
-    evidence = retrieve(question, index_dir, top_k or settings.top_k)
+    evidence = retrieve_overview(index_dir) if overview else retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:
         return message("insufficient_evidence", language), [], "insufficient_evidence"
     if settings.chat_mode == "extractive":
@@ -168,14 +193,42 @@ def answer_question(question: str, language: Language, index_dir: Path,
                                       for c in evidence]}, ensure_ascii=False)
     answer = source_conflict(question, evidence, language)
     if answer is None:
-        raw = generate_answer([{"role": "system", "content": SYSTEM_PROMPT},
-                               {"role": "user", "content": prompt}])
-        try:
-            stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
-            answer = GeneratedAnswer.model_validate_json(stripped)
-            validate_answer(answer, evidence)
-        except (ValueError, TypeError):
-            # Fail closed: do not display a model answer with unverifiable sources.
+        instruction = SYSTEM_PROMPT
+        if overview:
+            instruction += """\nGive an educational overview with one topic per claim, in this order:
+benefits; premiums/monthly charges and lapse; interest/guarantees; withdrawals and
+early surrender; cooling-off cancellation; exclusions. Include only supported
+facts and cite every passage needed for each claim's numbers and conditions.
+Do not combine coverage age, interest rates and unrelated benefits into one claim.
+Use the at-a-glance table alongside its notes. If discussing assumed interest
+rates, state that they are from January 2022 and non-guaranteed. Explain the
+15-year account-value guarantee accurately, not as annual credited interest.
+Do not present marketing comparisons with bank deposits as a guaranteed return.
+Keep the general suicide provision separate from terminal-illness exclusions.
+"Suicide whilst sane or insane" does not mean mental illness itself is excluded.
+Preserve whether a waiting-period condition applies to the underlying disease
+or injury occurring, rather than substituting the date of terminal diagnosis.
+Explain risks without recommending purchase.
+"""
+        messages = [{"role": "system", "content": instruction},
+                    {"role": "user", "content": prompt}]
+        # Broad summaries can omit a needed source ID; allow one bounded repair.
+        for attempt in range(2 if overview else 1):
+            raw = generate_answer(messages)
+            try:
+                stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+                answer = GeneratedAnswer.model_validate_json(stripped)
+                validate_answer(answer, evidence)
+                break
+            except (ValueError, TypeError):
+                messages.extend([
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": "The answer failed source/number validation. Return corrected JSON. "
+                     "Check EVERY number and condition against the exact cited chunks. Add the needed supplied "
+                     "source IDs, or remove unsupported statements. Do not invent sources or facts."},
+                ])
+        else:
+            # Fail closed even if the repair still contains unverifiable claims.
             return message("insufficient_evidence", language), [], "insufficient_evidence"
     else:
         validate_answer(answer, evidence)

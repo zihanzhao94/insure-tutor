@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+from types import SimpleNamespace
 import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -172,3 +173,55 @@ def test_malformed_or_empty_answer_fails_closed(monkeypatch, tmp_path, raw):
     monkeypatch.setattr(query, "generate_answer", lambda messages: raw)
     answer, citations, status = query.answer_question("insurance?", "en", tmp_path)
     assert status == "insufficient_evidence" and not citations
+
+
+def test_overview_interleaves_topics_deduplicates_and_obeys_context_budget(monkeypatch, tmp_path):
+    monkeypatch.setattr(query, "load_index", lambda *a: SimpleNamespace(chunks=[
+        chunk(page=16, text="Benefits at a glance.")]))
+    calls = []
+    def retrieve(question, directory, top_k):
+        calls.append(question)
+        number = len(calls)
+        return [chunk(page=number, text=f"Topic {number}: " + "x" * 1000),
+                chunk(page=10, text="Shared conditions. " + "y" * 1500)] + [
+            chunk(page=number, number=i, text="z" * 1000) for i in range(2, 15)]
+    monkeypatch.setattr(query, "retrieve", retrieve)
+    sources = query.retrieve_overview(tmp_path)
+    assert len(calls) == 5
+    assert [source.pdf_page for source in sources[:6]] == [16, 1, 2, 3, 4, 5]
+    assert sum(len(source.text) for source in sources) <= 17000
+    assert len({source.chunk_id for source in sources}) == len(sources)
+    assert sum(source.pdf_page == 10 for source in sources) == 1
+
+
+def test_overview_answer_uses_topic_evidence_and_existing_validation(monkeypatch, tmp_path):
+    source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    def forbidden(*a):
+        raise AssertionError("Overview used single-topic retrieval")
+    monkeypatch.setattr(query, "retrieve", forbidden)
+    def generate(messages):
+        assert "educational overview" in messages[0]["content"]
+        return json.dumps({"status": "answered", "claims": [{"text": "Cancellation has a 21-day cooling-off period.", "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("Summarize this document", "en", tmp_path, overview=True)
+    assert status == "answered" and "21" in answer and citations[0].pdf_page == 1
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_overview_repairs_bad_citations_once_then_validates_again(monkeypatch, tmp_path, repair_succeeds):
+    source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    calls = []
+    def generate(messages):
+        calls.append(len(messages))
+        if len(calls) == 2:
+            assert "failed source/number validation" in messages[-1]["content"]
+        days = 21 if len(calls) == 2 and repair_succeeds else 99
+        return json.dumps({"status": "answered", "claims": [
+            {"text": f"The cooling-off period is {days} days.", "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("Summarize this document", "en", tmp_path, overview=True)
+    assert calls == [2, 4]
+    assert status == ("answered" if repair_succeeds else "insufficient_evidence")
+    assert bool(citations) == repair_succeeds

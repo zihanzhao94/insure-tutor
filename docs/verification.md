@@ -70,3 +70,39 @@ on the next ingestion. The backend Docker service restarted healthy and the
 14-case API evaluation passed again. Browser verification confirmed the
 `PDF page 14` citation label/link, cleaned excerpts and preserved `100`/`31`
 policy numbers. See [pdf-page-references.jpg](pdf-page-references.jpg).
+
+## AI intent routing
+
+Checked on 2026-10-07 with the existing GPT/OpenAI configuration:
+
+- **56 non-network backend tests passed.** New checks cover validated category
+  labels, malformed classifier output, history-aware routing, clarification,
+  extractive-mode compatibility, overview coverage/budget and one bounded
+  citation-repair attempt followed by the same evidence validation.
+- Frontend TypeScript/Vite build passed. Both Docker services were rebuilt;
+  backend health and the frontend/proxied health endpoints passed.
+- The initial 22-case live run passed **21/22** checks, including all 14 existing
+  cases. English overview generation failed its source/number checks. Report:
+  `evals/results/20261007T084426Z.json` (ignored).
+- The expanded eight-case run passed **7/8** before the bounded overview repair
+  was added. Paraphrased personal advice, advice after history, unrelated topics
+  after history, ambiguous input and a legitimate suicide-exclusion question
+  passed. Report: `evals/results/20261007T084737Z.json` (ignored).
+- After adding summary-table coverage, clearer topic/citation instructions and
+  a single repair attempt, the three overview cases passed twice. The final
+  run passed **3/3**, citing PDF pages 8, 12, 14, 15 and 16:
+  `evals/results/20261007T085255Z.json` (ignored).
+
+The original screenshot question now returns a sourced overview in Simplified
+and Traditional Chinese, rather than failing a required-keyword check.
+Only the `uncertain` category requests clarification; a clear question with no
+source evidence follows retrieval and returns an insufficient-evidence response.
+Provider or malformed-category failures return safe API errors.
+
+These are smoke checks, not classification accuracy or semantic correctness
+scores. Manual review still found summaries that paraphrase terminal-illness
+exclusions too broadly, including a Chinese wording that can wrongly imply
+mental illness itself is excluded. The overview prompt explicitly cautions
+against this, but source-ID and number validation cannot enforce that meaning.
+Exact exclusions, waiting-period conditions and financial guarantees still need
+review against the PDF; no independent semantic output judge was added.
