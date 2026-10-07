@@ -7,7 +7,7 @@ button, select, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 a { color: #226b61; text-underline-offset: 4px; }
-button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, .source-passages:focus-visible { outline: 3px solid #8bbcaf; outline-offset: 3px; }
+button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #8bbcaf; outline-offset: 3px; }
 main { max-width: 1240px; margin: auto; padding: 0 40px; }
 .topbar { min-height: 116px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .brand { display: flex; gap: 12px; align-items: center; text-decoration: none; color: #1a3e39; font-family: Manrope, sans-serif; font-weight: 800; font-size: 23px; letter-spacing: -.9px; }
@@ -60,28 +60,9 @@ footer { max-width: 760px; margin: 22px 0 35px; font-size: 10px; color: #8a978c;
 .answer-status { font-size: 9px; border: 1px solid #d8e4d0; border-radius: 4px; color: #648159; padding: 2px 6px; }
 .answer-status.conflict, .answer-status.insufficient_evidence { color: #917334; border-color: #e4d4ac; }
 .answer-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.9; }
-.sources h3 { font-size: 11px; color: #607367; font-weight: 600; margin: 21px 0 10px; }
-.source-card { border: 1px solid #e3e9dd; border-radius: 9px; padding: 12px 14px; margin-bottom: 8px; background: #fafcf7; }
-.source-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; }
-.source-meta { min-width: min(100%, 180px); flex: 1; }
-.source-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.source-references { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-.source-page { font-size: 12px; font-weight: 600; color: #365647; }
-.source-card small { display: block; margin-top: 5px; font-size: 10px; color: #6b7d65; overflow-wrap: anywhere; }
-.source-number { min-width: 25px; height: 23px; padding: 0 4px; border-radius: 5px; background: #e5ecd9; display: grid; place-items: center; color: #476139; font-size: 10px; flex-shrink: 0; }
-.source-link { font-size: 11px; white-space: nowrap; padding: 3px 0; }
-.source-details { margin-top: 9px; }
-.source-details summary { cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; color: #546f5a; list-style: none; }
-.source-details summary::-webkit-details-marker { display: none; }
-.source-hide, .source-details[open] .source-show { display: none; }
-.source-details[open] .source-hide { display: inline; }
-.source-chevron { transition: transform .15s ease; }
-.source-details[open] .source-chevron { transform: rotate(180deg); }
-.source-note { font-size: 10px; line-height: 1.6; color: #6b7d65; margin: 7px 0 9px; }
-.source-passages { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px; border: 1px solid #e4eade; border-radius: 6px; background: #fff; }
-.source-passage + .source-passage { margin-top: 15px; padding-top: 14px; border-top: 1px solid #e6ecdf; }
-.source-passage-label { font-size: 10px; font-weight: 600; color: #61765c; margin: 0 0 7px; }
-.source-card blockquote { margin: 0; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; color: #40574c; }
+.inline-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; margin: 0 2px; padding: 0 5px; border-radius: 6px; background: #edf2e9; color: #48634c; font-size: 10px; font-weight: 600; line-height: 1; text-decoration: none; vertical-align: baseline; white-space: nowrap; }
+.inline-citation:hover { background: #dfe9d8; color: #254c3c; }
+.citation-hint { margin: 13px 0 0; color: #81917c; font-size: 10px; line-height: 1.6; }
 .thinking { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #7c8f74; padding: 20px 0; }
 .pulse { width: 7px; height: 7px; background: #81a16d; border-radius: 50%; animation: pulse 1.2s infinite alternate; }
 @keyframes pulse { to { opacity: .25; } }
