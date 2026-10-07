@@ -1,12 +1,12 @@
-"""Offline PDF extraction, recursive splitting, and persistent SQLite vector index."""
+"""Offline PDF extraction, recursive splitting, and persistent Chroma vector index."""
 
 import argparse
 import hashlib
 import json
 import re
-import sqlite3
 import unicodedata
 from pathlib import Path
+from uuid import uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
@@ -14,6 +14,7 @@ from pypdf import PdfReader
 from ..config import get_settings
 from ..model_client import embed_texts
 from ..schemas import DocumentChunk, DocumentPage
+from .query import get_client, load_index
 
 
 def load_pdf(pdf_path: Path) -> list[DocumentPage]:
@@ -55,25 +56,37 @@ def split_pages(pages: list[DocumentPage], chunk_size: int | None = None,
 
 
 def build_index(chunks: list[DocumentChunk], index_dir: Path, fingerprint: str = "") -> None:
-    """Embed chunks and atomically save text, vectors, and metadata to SQLite."""
+    """Build a Chroma collection and publish it only after every chunk is stored."""
     if not chunks:
         raise ValueError("Cannot build an empty index.")
     settings = get_settings()
     vectors = embed_texts([chunk.text for chunk in chunks])
+    if len(vectors) != len(chunks):
+        raise ValueError("Embedding count does not match the chunk count.")
     index_dir.mkdir(parents=True, exist_ok=True)
-    temporary = index_dir / "index.building.sqlite"
-    temporary.unlink(missing_ok=True)
+    client = get_client(str((index_dir / "chroma").resolve()))
+    name = f"insurance-{uuid4().hex}"
+    collection = client.create_collection(
+        name=name, embedding_function=None, configuration={"hnsw": {"space": "cosine"}},
+        metadata={"embedding_model": settings.embedding_model,
+                  "embedding_backend": settings.embedding_backend,
+                  "dimension": str(len(vectors[0])), "fingerprint": fingerprint})
+    temporary = index_dir / f"{name}.json"
     try:
-        with sqlite3.connect(temporary) as db:
-            db.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            db.execute("CREATE TABLE chunks (chunk_id TEXT PRIMARY KEY, record TEXT NOT NULL, vector TEXT NOT NULL)")
-            db.executemany("INSERT INTO chunks VALUES (?, ?, ?)", [
-                (chunk.chunk_id, chunk.model_dump_json(), json.dumps(vector))
-                for chunk, vector in zip(chunks, vectors, strict=True)])
-            metadata = {"embedding_model": settings.embedding_model, "embedding_backend": settings.embedding_backend,
-                        "dimension": str(len(vectors[0])), "fingerprint": fingerprint}
-            db.executemany("INSERT INTO metadata VALUES (?, ?)", metadata.items())
-        temporary.replace(index_dir / "index.sqlite")
+        batch_size = client.get_max_batch_size()
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start:start + batch_size]
+            collection.add(
+                ids=[chunk.chunk_id for chunk in batch], documents=[chunk.text for chunk in batch],
+                embeddings=vectors[start:start + batch_size],
+                metadatas=[chunk.model_dump(exclude={"text", "chunk_id"}, exclude_none=True)
+                           for chunk in batch])
+        # Keep the previous collection usable if embedding or storage fails.
+        temporary.write_text(json.dumps({"collection": name}), encoding="utf-8")
+        temporary.replace(index_dir / "active_collection.json")
+    except Exception:
+        client.delete_collection(name)
+        raise
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -92,14 +105,15 @@ def ensure_index(force: bool = False) -> dict[str, int | str]:
     digest.update(f"{settings.chunk_size}:{settings.chunk_overlap}:{settings.embedding_backend}:{settings.embedding_model}".encode())
     fingerprint = digest.hexdigest()
     index_dir = settings.data_dir / "index"
-    index_path = index_dir / "index.sqlite"
+    index_path = index_dir / "active_collection.json"
     if index_path.exists() and not force:
-        with sqlite3.connect(index_path) as db:
-            metadata = dict(db.execute("SELECT key, value FROM metadata"))
-            if metadata.get("fingerprint") == fingerprint:
-                # Reuse unchanged inputs to avoid repeated document embedding calls.
-                return {"state": "reused", "documents": len(files),
-                        "chunks": db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]}
+        name = json.loads(index_path.read_text(encoding="utf-8"))["collection"]
+        collection = get_client(str((index_dir / "chroma").resolve())).get_collection(
+            name, embedding_function=None)
+        if (collection.metadata or {}).get("fingerprint") == fingerprint:
+            # Reuse unchanged inputs to avoid repeated document embedding calls.
+            load_index(index_dir)
+            return {"state": "reused", "documents": len(files), "chunks": collection.count()}
     pages = [page for pdf in files for page in load_pdf(pdf)]
     chunks = split_pages(pages)
     processed = settings.data_dir / "processed"

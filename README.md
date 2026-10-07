@@ -73,23 +73,29 @@ docker compose exec backend python -m app.rag.ingest --force
 ```
 
 Use one ingestion process at a time. Restart after changing source files or
-chunk/model settings. Index replacement is atomic: failed embedding requests
-leave the previous vector index intact.
+chunk/model settings. Ingestion builds a new Chroma collection, then atomically
+updates `data/index/active_collection.json` after all writes succeed. Failed
+embedding or storage leaves the previous collection active. Previous collections
+are retained locally; this demo does not perform automatic index cleanup.
 
 The fingerprint tracks PDF contents, chunk settings, and embedding configuration.
 If extraction, splitting, or vector-processing code changes, use `--force` to
 rebuild; this demo does not maintain a separate index version.
+
+The former `data/index/index.sqlite` vector file is no longer read. The first
+startup after this migration builds Chroma from the source PDF; later startups
+reuse it. The old file can remain as a local backup.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     PDF[Local PDF] -->|Extract pages and split chunks| Ingest[Offline ingestion]
-    Ingest -->|Embed text via OpenAI| Store[(Local SQLite vector index)]
+    Ingest -->|Embed text via OpenAI| Store[(Local Chroma vector store)]
     UI[React chat] -->|Question and session ID| API[FastAPI / chat]
     API -->|Input scope and misuse checks| RAG[RAG query]
     History[(Local conversation SQLite)] <--> API
-    RAG <-->|Dense and lexical retrieval| Store
+    RAG <-->|Cosine query and chunk metadata| Store
     RAG -->|Question and retrieved passages| GPT[GPT API]
     GPT -->|Structured claims and source IDs| Check[Evidence and number validation]
     Check -->|Answer, source text and PDF pages| API
@@ -116,7 +122,8 @@ backend/app/
 frontend/src/        React chat, language selector and expandable source cards
 data/raw/            Original source PDF
 data/processed/      Extracted pages/chunks (generated; ignored)
-data/index/          SQLite vectors and metadata (generated; ignored)
+data/index/chroma/   Chroma text, vectors and metadata (generated; ignored)
+data/index/active_collection.json  Completed collection pointer (generated; ignored)
 data/sessions/       Conversation database (generated; ignored)
 backend/tests/       Non-network unit/API tests
 evals/               Source-grounded API smoke cases and runner
@@ -132,13 +139,28 @@ evals/               Source-grounded API smoke cases and runner
   prefers paragraph/line and Chinese punctuation boundaries. Defaults are
   1,000 **characters** with 150-character overlap; chunks never cross a page.
   Document IDs, filenames and one-based **PDF file pages** stay attached.
-- **Simple local vector store.** SQLite stores text, normalized vectors and
-  model/fingerprint metadata. NumPy cosine similarity scans the small corpus;
-  a normalized keyword/Chinese-bigram score adds a 0.12 lexical signal.
+- **Local Chroma vector store.** `PersistentClient` stores text, vectors, page
+  metadata and embedding/fingerprint settings on disk without another service.
+  The application supplies its existing OpenAI embeddings explicitly; Chroma
+  does not download or invoke a default embedding model. Chroma queries use
+  cosine distance, converted to similarity with `1 - distance`.
+  For this tiny corpus, retrieval requests all chunk distances, then adds a
+  normalized keyword/Chinese-bigram score weighted by 0.12 before selecting
+  primary chunks. This preserves lexical recall rather than introducing a
+  new candidate cutoff during the storage migration.
   `TOP_K=5` selects primary chunks, followed by complete matching pages and
   Notes/disclosure pages up to a 17,000-character context budget. This preserves
   footnotes that otherwise sit apart from benefit descriptions. The supplied
   20-page brochure produces 53 chunks with the default settings.
+- **Why Chroma.** Its embedded Python API combines document/metadata storage
+  and vector querying for this local demo. Qdrant local mode is another valid
+  choice. FAISS would still need our own document/metadata persistence;
+  pgvector would introduce PostgreSQL, which this project otherwise does not
+  need. This is a deployment/simplicity choice, not a performance benchmark.
+  See the [Chroma client documentation](https://docs.trychroma.com/reference/python/client),
+  [Qdrant client](https://github.com/qdrant/qdrant-client),
+  [FAISS](https://github.com/facebookresearch/faiss) and
+  [pgvector](https://github.com/pgvector/pgvector).
 - **Server-owned citations.** GPT returns claims and source IDs using a strict JSON schema. The backend resolves
   original passages, filenames, PDF page links and citation numbers. It rejects
   unknown IDs, unverifiable quotes, unsupported numeric values and malformed
@@ -219,8 +241,10 @@ Recorded checks: [docs/verification.md](docs/verification.md).
 - This demo supports digitally extractable PDFs, not scanned-document OCR.
   PDF table extraction can lose layout or glyphs. Review source pages when
   tables or translations conflict.
-- SQLite/NumPy full scans fit this tiny corpus; a large document collection
-  needs a vector database/index, stronger reranking and targeted footnote links.
+- Retrieval still loads all chunk text and requests all distances for the small
+  brochure corpus. A large collection needs bounded Chroma candidates, stronger
+  reranking and targeted footnote links. `PersistentClient` is for this local
+  demo; shared production deployment should use a server-backed database.
 - Deterministic guards and one grounded model call are not a general safety
   verifier. Exact source IDs/quotes and numeric checks establish provenance,
   not logical entailment. Broader adversarial testing remains necessary.

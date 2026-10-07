@@ -7,3 +7,4 @@ pypdf[crypto]>=6.0,<7.0
 langchain-text-splitters>=1.0,<2.0
 fastembed>=0.7,<1.0
 opencc-python-reimplemented>=0.1.7,<1.0
+chromadb==1.5.9

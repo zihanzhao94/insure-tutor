@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
-import numpy as np
+import os
+import subprocess
+import sys
 import pytest
 from app.config import ROOT
 from app.model_client import ModelError
@@ -38,13 +40,50 @@ def test_failed_rebuild_preserves_old_index(monkeypatch, tmp_path):
     monkeypatch.setattr(ingest, "embed_texts", lambda texts: [[1., 0.] for _ in texts])
     directory = tmp_path / "index"
     ingest.build_index([chunk()], directory, "first")
-    previous = (directory / "index.sqlite").read_bytes()
+    previous = (directory / "active_collection.json").read_bytes()
     def fail(texts):
         raise ModelError("Provider unavailable")
     monkeypatch.setattr(ingest, "embed_texts", fail)
     with pytest.raises(ModelError):
         ingest.build_index([chunk(text="Changed policy conditions.")], directory, "second")
-    assert (directory / "index.sqlite").read_bytes() == previous
+    assert (directory / "active_collection.json").read_bytes() == previous
+    assert query.load_index(directory).metadata["fingerprint"] == "first"
+
+
+def test_failed_chroma_write_preserves_published_collection(monkeypatch, tmp_path):
+    monkeypatch.setattr(ingest, "embed_texts", lambda texts: [[1., 0.] for _ in texts])
+    directory = tmp_path / "index"
+    ingest.build_index([chunk()], directory, "first")
+    previous = (directory / "active_collection.json").read_bytes()
+    client = query.get_client(str((directory / "chroma").resolve()))
+    monkeypatch.setattr(type(client), "get_max_batch_size", lambda self: 1)
+    # The second batch has an invalid dimension, after the first batch succeeds.
+    monkeypatch.setattr(ingest, "embed_texts", lambda texts: [[1., 0.], [1., 0., 0.]])
+    with pytest.raises(Exception, match="dimension"):
+        ingest.build_index([chunk(text="New clause."), chunk(page=2)], directory, "second")
+    assert (directory / "active_collection.json").read_bytes() == previous
+    assert query.load_index(directory).chunks[0].text == chunk().text
+    assert client.count_collections() == 1
+
+
+def test_chroma_persists_sources_and_cosine_search_across_processes(monkeypatch, tmp_path):
+    directory = tmp_path / "index"
+    monkeypatch.setattr(ingest, "embed_texts", lambda texts: [[1., 0.], [0., 1.]])
+    ingest.build_index([chunk(text="Insurance premiums."), chunk(page=2, text="Policy withdrawals.")], directory)
+    script = """
+import sys
+from pathlib import Path
+from app.rag.query import load_index
+index = load_index(Path(sys.argv[1]))
+matches = index.collection.query(query_embeddings=[[0., 1.]], n_results=1)
+assert matches['ids'][0] == ['plan:p2:c1']
+assert matches['metadatas'][0][0]['pdf_page'] == 2
+assert matches['documents'][0][0] == 'Policy withdrawals.'
+assert abs(matches['distances'][0][0]) < 1e-6
+"""
+    environment = {**os.environ, "PYTHONPATH": str(ROOT / "backend")}
+    subprocess.run([sys.executable, "-c", script, str(directory)], env=environment,
+                   check=True, capture_output=True, text=True, timeout=30)
 
 
 def test_unchanged_ingestion_reuses_index_without_embedding(monkeypatch, tmp_path):
@@ -60,6 +99,8 @@ def test_unchanged_ingestion_reuses_index_without_embedding(monkeypatch, tmp_pat
     (raw / "plan.pdf").write_bytes(b"changed document")
     assert ingest.ensure_index()["state"] == "built"
     assert len(calls) == 2
+    assert ingest.ensure_index(force=True)["state"] == "built"
+    assert len(calls) == 3
 
 
 def test_retrieval_adds_whole_notes_page_not_only_heading(monkeypatch, tmp_path):

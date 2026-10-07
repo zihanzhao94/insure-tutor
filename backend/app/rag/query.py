@@ -2,15 +2,15 @@
 
 import json
 import re
-import sqlite3
-from contextlib import closing
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
-import numpy as np
+import chromadb
+from chromadb.api.models.Collection import Collection
+from chromadb.config import Settings
 from opencc import OpenCC
 
 from ..config import get_settings
@@ -24,28 +24,37 @@ _converter = OpenCC("t2s")
 @dataclass
 class VectorIndex:
     chunks: list[DocumentChunk]
-    vectors: np.ndarray
+    collection: Collection
     metadata: dict[str, str]
 
 
 @lru_cache(maxsize=4)
-def _read_index(path: str, modified: int) -> VectorIndex:
-    """Read chunks, vectors, and metadata from SQLite; the modification time invalidates the cache."""
-    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
-        metadata = dict(db.execute("SELECT key, value FROM metadata"))
-        rows = db.execute("SELECT record, vector FROM chunks ORDER BY chunk_id").fetchall()
-    if not rows:
+def get_client(path: str):
+    """Open local persistent Chroma storage without a separate database server."""
+    return chromadb.PersistentClient(path=path, settings=Settings(anonymized_telemetry=False))
+
+
+@lru_cache(maxsize=4)
+def _read_index(path: str, collection_name: str) -> VectorIndex:
+    """Cache chunk records for supporting pages; vectors remain managed by Chroma."""
+    collection = get_client(path).get_collection(collection_name, embedding_function=None)
+    records = collection.get(include=["documents", "metadatas"])
+    chunks = [DocumentChunk(chunk_id=chunk_id, text=text, **metadata)
+              for chunk_id, text, metadata in zip(
+                  records["ids"], records["documents"], records["metadatas"], strict=True)]
+    if not chunks:
         raise ValueError("The retrieval index is empty. Run ingestion first.")
-    return VectorIndex([DocumentChunk.model_validate_json(row[0]) for row in rows],
-                       np.asarray([json.loads(row[1]) for row in rows], dtype=np.float32), metadata)
+    return VectorIndex(sorted(chunks, key=lambda chunk: chunk.chunk_id), collection,
+                       dict(collection.metadata or {}))
 
 
 def load_index(index_dir: Path) -> VectorIndex:
     """Load the local index and verify that its embedding configuration matches the current settings."""
-    path = (index_dir / "index.sqlite").resolve()
-    if not path.exists():
+    manifest = index_dir / "active_collection.json"
+    if not manifest.exists():
         raise FileNotFoundError("The retrieval index is not ready. Run PDF ingestion first.")
-    index = _read_index(str(path), path.stat().st_mtime_ns)
+    name = json.loads(manifest.read_text(encoding="utf-8"))["collection"]
+    index = _read_index(str((index_dir / "chroma").resolve()), name)
     settings = get_settings()
     if (index.metadata.get("embedding_model") != settings.embedding_model or
             index.metadata.get("embedding_backend") != settings.embedding_backend):
@@ -64,21 +73,25 @@ def _terms(text: str) -> Counter:
 def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChunk]:
     """Rank chunks by semantic and lexical similarity, then add supporting pages within the context budget."""
     index = load_index(index_dir)
-    vector = np.asarray(embed_texts([question])[0], dtype=np.float32)
-    if vector.shape[0] != index.vectors.shape[1]:
+    vector = embed_texts([question])[0]
+    if len(vector) != int(index.metadata["dimension"]):
         raise ValueError("Embedding dimension mismatch. Rebuild the index.")
-    semantic = index.vectors @ vector
+    # Score the entire tiny brochure corpus to preserve lexical recall.
+    matches = index.collection.query(query_embeddings=[vector], n_results=len(index.chunks),
+                                     include=["distances"])
+    semantic = dict(zip(matches["ids"][0],
+                        [1.0 - distance for distance in matches["distances"][0]], strict=True))
     terms = _terms(question)
     chunk_terms = [_terms(chunk.text) for chunk in index.chunks]
-    lexical = np.array([sum(min(count, counts[term]) for term, count in terms.items())
-                        for counts in chunk_terms], dtype=float)
-    if lexical.max() > 0:
-        lexical /= lexical.max()
-    scores = semantic + 0.12 * lexical
-    order = np.argsort(-scores)[:top_k]
-    chosen = [index.chunks[int(i)] for i in order]
+    lexical = [sum(min(count, counts[term]) for term, count in terms.items())
+               for counts in chunk_terms]
+    maximum = max(lexical) or 1
+    scores = {chunk.chunk_id: semantic[chunk.chunk_id] + 0.12 * count / maximum
+              for chunk, count in zip(index.chunks, lexical, strict=True)}
+    chosen = sorted(index.chunks, key=lambda chunk: -scores[chunk.chunk_id])[:max(1, top_k)]
     # A low-similarity, zero-keyword result provides no useful starting evidence.
-    if float(semantic[order[0]]) < 0.2 and float(lexical[order[0]]) == 0:
+    if semantic[chosen[0].chunk_id] < 0.2 and not any(
+            term in _terms(chosen[0].text) for term in terms):
         return []
     docs = {chunk.document_id for chunk in chosen}
     pages = {(chunk.document_id, chunk.pdf_page) for chunk in chosen[:3]}
