@@ -36,6 +36,7 @@ MESSAGES = {
 
 
 def localize(text: str, language: Language) -> str:
+    """Convert Chinese between Simplified and Traditional forms; leave English unchanged."""
     if language == "zh-Hans":
         return _simplifier.convert(text)
     if language == "zh-Hant":
@@ -44,11 +45,13 @@ def localize(text: str, language: Language) -> str:
 
 
 def message(kind: str, language: Language) -> str:
+    """Return a localized, predefined message for the requested response status."""
     values = MESSAGES["en" if language == "en" else "zh-Hans"]
     return localize(values[kind], language)
 
 
 def check_input(question: str, has_history: bool = False) -> str | None:
+    """Check scope and common misuse; return a rejection status or None to continue."""
     text = _simplifier.convert(question).lower()
     injection = r"ignore.{0,30}(instructions|rules|prompt)|reveal.{0,30}(prompt|secret|key)|(?:invent|fabricate|fake).{0,30}(citation|policy|term)|忽略.{0,20}(指令|规则|提示)|(?:透露|显示|泄露).{0,15}(密钥|提示词)|(?:伪造|编造).{0,15}(条款|引用|保单)"
     if re.search(injection, text):
@@ -66,21 +69,19 @@ def check_input(question: str, has_history: bool = False) -> str | None:
 
 
 def _canonical(text: str) -> str:
+    """Normalize character forms, case, and whitespace for source quotation matching."""
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text)).lower()
 
 
 def _numbers(text: str) -> set[str]:
+    """Extract and normalize numeric values so equivalent formats compare equally."""
     raw = re.findall(r"(?<![\d.])\d+(?:,\d{3})*(?:\.\d+)?", text)
     # Numeric formatting can change across languages: 4, 4.0 and 4.00 agree.
     return {str(Decimal(value.replace(",", "")).normalize()) for value in raw}
 
 
 def validate_answer(answer: GeneratedAnswer, evidence: list[DocumentChunk]) -> None:
-    """Reject invented source IDs, non-verbatim quotes, and unsupported numbers.
-
-    An exact quotation verifies provenance, not whether every paraphrase follows
-    logically. The eval set and manual review still matter.
-    """
+    """Validate source IDs, quotations, and numeric support; this does not prove semantic correctness."""
     sources = {chunk.chunk_id: chunk for chunk in evidence}
     if answer.status in {"answered", "conflict"} and not answer.claims:
         raise ValueError("An answered response must include supported claims.")
@@ -102,11 +103,7 @@ def validate_answer(answer: GeneratedAnswer, evidence: list[DocumentChunk]) -> N
 
 
 def source_conflict(question: str, evidence: list[DocumentChunk], language: Language) -> GeneratedAnswer | None:
-    """Check the supplied brochure's bilingual sum-insured-change row.
-
-    Compare extracted values, never correct a source typo by guessing. This is a
-    narrowly scoped check for a known table discrepancy, not a general detector.
-    """
+    """Compare the known bilingual sum-insured-change row and report conflicting amounts with citations."""
     text = _simplifier.convert(question).lower()
     if not re.search(r"(?:increase|decrease|change).*(?:sum insured|cover)|(?:增加|减少|更改|变更).*(?:保额|保障额)", text):
         return None

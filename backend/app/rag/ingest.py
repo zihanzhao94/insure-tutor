@@ -15,10 +15,12 @@ from ..config import get_settings
 from ..model_client import embed_texts
 from ..schemas import DocumentChunk, DocumentPage
 
+# Bump when extraction, splitting logic, or index format changes require a rebuild.
 INDEX_VERSION = 1
 
 
 def load_pdf(pdf_path: Path) -> list[DocumentPage]:
+    """Extract PDF text page by page, preserving filenames and one-based page numbers."""
     reader = PdfReader(pdf_path)
     if reader.is_encrypted and reader.decrypt("") == 0:
         raise ValueError(f"PDF requires a password: {pdf_path.name}")
@@ -26,6 +28,7 @@ def load_pdf(pdf_path: Path) -> list[DocumentPage]:
     for number, page in enumerate(reader.pages, start=1):
         text = unicodedata.normalize("NFKC", page.extract_text() or "")
         text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text).strip()
+        # save each page with its document ID, filename, page number, and text content
         pages.append(DocumentPage(document_id=pdf_path.stem, filename=pdf_path.name,
                                   pdf_page=number, text=text))
     if not any(page.text for page in pages):
@@ -35,6 +38,7 @@ def load_pdf(pdf_path: Path) -> list[DocumentPage]:
 
 def split_pages(pages: list[DocumentPage], chunk_size: int | None = None,
                 chunk_overlap: int | None = None) -> list[DocumentChunk]:
+    """Split pages into character-based chunks with source metadata; chunks never cross pages."""
     settings = get_settings()
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size if chunk_size is not None else settings.chunk_size,
@@ -54,7 +58,7 @@ def split_pages(pages: list[DocumentPage], chunk_size: int | None = None,
 
 
 def build_index(chunks: list[DocumentChunk], index_dir: Path, fingerprint: str = "") -> None:
-    """Atomically replace the index after all embeddings succeed."""
+    """Embed chunks and atomically save text, vectors, and metadata to SQLite."""
     if not chunks:
         raise ValueError("Cannot build an empty index.")
     settings = get_settings()
@@ -78,11 +82,13 @@ def build_index(chunks: list[DocumentChunk], index_dir: Path, fingerprint: str =
 
 
 def ensure_index(force: bool = False) -> dict[str, int | str]:
+    """Reuse an unchanged index or rebuild it from PDFs, saving inspectable page and chunk records."""
     settings = get_settings()
     files = sorted((settings.data_dir / "raw").glob("*.pdf"))
     if not files:
         raise ValueError("Put at least one PDF in data/raw/ before starting InsureTutor.")
     digest = hashlib.sha256()
+    # Fingerprint PDFs, chunk settings, embedding configuration, and index version.
     for pdf in files:
         digest.update(pdf.name.encode())
         digest.update(pdf.read_bytes())
@@ -94,6 +100,7 @@ def ensure_index(force: bool = False) -> dict[str, int | str]:
         with sqlite3.connect(index_path) as db:
             metadata = dict(db.execute("SELECT key, value FROM metadata"))
             if metadata.get("fingerprint") == fingerprint:
+                # Reuse unchanged inputs to avoid repeated document embedding calls.
                 return {"state": "reused", "documents": len(files),
                         "chunks": db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]}
     pages = [page for pdf in files for page in load_pdf(pdf)]
@@ -108,6 +115,7 @@ def ensure_index(force: bool = False) -> dict[str, int | str]:
 
 
 def main() -> None:
+    """Parse CLI options, prepare the index, and print the result; --force rebuilds an existing index."""
     parser = argparse.ArgumentParser(description="Build the insurance PDF index.")
     parser.add_argument("--force", action="store_true")
     print(json.dumps(ensure_index(force=parser.parse_args().force), ensure_ascii=False))

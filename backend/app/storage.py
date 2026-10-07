@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 def _connect(data_dir: Path) -> sqlite3.Connection:
+    """Open the conversation database and create its table and index if needed."""
     directory = data_dir / "sessions"
     directory.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(directory / "sessions.sqlite", timeout=15)
@@ -15,6 +16,7 @@ def _connect(data_dir: Path) -> sqlite3.Connection:
 
 
 def load_history(session_id: str, data_dir: Path, limit: int = 10) -> list[dict[str, str]]:
+    """Return the latest messages for one session in chronological order."""
     with closing(_connect(data_dir)) as db:
         rows = db.execute("SELECT role, content FROM messages WHERE session_id=? ORDER BY id DESC LIMIT ?",
                           (session_id, limit)).fetchall()
@@ -22,6 +24,7 @@ def load_history(session_id: str, data_dir: Path, limit: int = 10) -> list[dict[
 
 
 def save_turn(session_id: str, question: str, answer: str, data_dir: Path) -> None:
+    """Save a user question and assistant answer together in one transaction."""
     with closing(_connect(data_dir)) as db:
         with db:
             db.executemany("INSERT INTO messages(session_id, role, content) VALUES (?, ?, ?)",

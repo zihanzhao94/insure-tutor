@@ -17,6 +17,7 @@ class ModelError(RuntimeError):
 
 
 def _post(url: str, headers: dict, body: dict) -> dict:
+    """Send a model API request and convert network or provider failures into safe ModelError messages."""
     try:
         response = httpx.post(url, headers=headers, json=body,
                               timeout=httpx.Timeout(75, connect=15))
@@ -35,12 +36,13 @@ def _post(url: str, headers: dict, body: dict) -> dict:
 
 @lru_cache(maxsize=2)
 def _embedding_model(name: str, cache_dir: str):
+    """Load and cache a FastEmbed model for the optional local embedding backend."""
     from fastembed import TextEmbedding
     return TextEmbedding(name, cache_dir=cache_dir, threads=2)
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Use the same model and normalization for documents and queries."""
+    """Embed texts in input order and normalize vectors using the configured backend."""
     if not texts:
         return []
     settings = get_settings()
@@ -77,6 +79,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def _normalize(vectors) -> list[list[float]]:
+    """Validate vectors and normalize their lengths for cosine similarity via dot products."""
     matrix = np.asarray(vectors, dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     if not np.isfinite(matrix).all() or np.any(norms == 0):
@@ -85,7 +88,7 @@ def _normalize(vectors) -> list[list[float]]:
 
 
 def generate_answer(messages: list[dict[str, str]]) -> str:
-    """Provider credentials remain server-side; never return raw provider errors."""
+    """Call the configured chat model; OpenAI output follows the strict answer JSON schema."""
     settings = get_settings()
     if not settings.model_api_key:
         raise ModelError("Set MODEL_API_KEY in .env to enable generated answers.")

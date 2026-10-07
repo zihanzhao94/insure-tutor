@@ -11,6 +11,7 @@ from .storage import load_history, save_turn
 
 
 def handle_chat(request: ChatRequest) -> ChatResponse:
+    """Check input, add follow-up context, call RAG, and persist the conversation turn."""
     settings = get_settings()
     session_id = request.session_id or uuid.uuid4().hex
     question = request.message.strip()

@@ -30,6 +30,7 @@ class VectorIndex:
 
 @lru_cache(maxsize=4)
 def _read_index(path: str, modified: int) -> VectorIndex:
+    """Read chunks, vectors, and metadata from SQLite; the modification time invalidates the cache."""
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
         metadata = dict(db.execute("SELECT key, value FROM metadata"))
         rows = db.execute("SELECT record, vector FROM chunks ORDER BY chunk_id").fetchall()
@@ -40,6 +41,7 @@ def _read_index(path: str, modified: int) -> VectorIndex:
 
 
 def load_index(index_dir: Path) -> VectorIndex:
+    """Load the local index and verify that its embedding configuration matches the current settings."""
     path = (index_dir / "index.sqlite").resolve()
     if not path.exists():
         raise FileNotFoundError("The retrieval index is not ready. Run PDF ingestion first.")
@@ -52,6 +54,7 @@ def load_index(index_dir: Path) -> VectorIndex:
 
 
 def _terms(text: str) -> Counter:
+    """Count English terms, numbers, and Chinese bigrams for lexical matching."""
     text = _converter.convert(text).lower()
     english = re.findall(r"[a-z]{3,}|\d+(?:\.\d+)?%?", text)
     chinese = re.findall(r"[\u4e00-\u9fff]+", text)
@@ -59,12 +62,7 @@ def _terms(text: str) -> Counter:
 
 
 def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChunk]:
-    """Dense similarity plus a small lexical signal, followed by context expansion.
-
-    The selected PDF has conditions in Notes and Key Product Disclosures. When a
-    benefit matches, include those pages and neighboring chunks from the matched
-    page. TOP_K controls primary matches, not the expanded evidence budget.
-    """
+    """Rank chunks by semantic and lexical similarity, then add supporting pages within the context budget."""
     index = load_index(index_dir)
     vector = np.asarray(embed_texts([question])[0], dtype=np.float32)
     if vector.shape[0] != index.vectors.shape[1]:
@@ -100,6 +98,7 @@ def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChu
 
 
 def _citation(chunk: DocumentChunk, excerpt: str) -> Citation:
+    """Build a source citation and PDF page link from server-owned chunk metadata."""
     return Citation(document_id=chunk.document_id, filename=chunk.filename,
                     pdf_page=chunk.pdf_page, excerpt=excerpt, chunk_id=chunk.chunk_id,
                     url=f"/api/documents/{quote(chunk.filename, safe='')}#page={chunk.pdf_page}")
@@ -141,6 +140,7 @@ if that rate had applied, including total interest and Extra Bonus, after at lea
 
 def answer_question(question: str, language: Language, index_dir: Path,
                     *, top_k: int | None = None) -> tuple[str, list[Citation], str]:
+    """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
     settings = get_settings()
     evidence = retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:

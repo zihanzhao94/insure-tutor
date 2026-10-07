@@ -62,6 +62,7 @@ class GroundedClaim(BaseModel):
     @classmethod
     def accept_source_ids(cls, value):
         # Both representations select the same server-owned source records.
+        """Convert string source IDs into citation objects for consistent validation."""
         if isinstance(value, list):
             return [{"chunk_id": item} if isinstance(item, str) else item for item in value]
         return value

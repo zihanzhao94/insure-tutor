@@ -26,6 +26,7 @@ class Settings:
 
 
 def get_settings() -> Settings:
+    """Load and validate settings; existing environment variables take precedence over .env."""
     load_dotenv(ROOT / ".env", override=False)
     provider = os.getenv("MODEL_PROVIDER", "openai")
     if provider not in {"anthropic", "openai"}:

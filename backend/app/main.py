@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Prepare or load the index at API startup and record common setup errors for health checks."""
     app.state.index_error = None
     try:
         if get_settings().auto_ingest:
@@ -38,6 +39,7 @@ app = FastAPI(title="InsureTutor", version="0.2.0", lifespan=lifespan)
 
 @app.get("/api/health")
 def health(response: Response):
+    """Return index readiness, source documents, and model configuration status."""
     settings = get_settings()
     ready, documents, count = False, [], 0
     error = getattr(app.state, "index_error", None)
@@ -56,6 +58,7 @@ def health(response: Response):
 
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
+    """Handle chat requests and translate common failures into HTTP errors."""
     try:
         return handle_chat(request)
     except ModelError as exc:
@@ -69,6 +72,7 @@ def chat(request: ChatRequest) -> ChatResponse:
 @app.get("/api/documents/{filename}")
 def document(filename: str):
     # Serve only existing source PDFs, never arbitrary filesystem paths.
+    """Serve existing source PDFs while preventing access to arbitrary files."""
     directory = (get_settings().data_dir / "raw").resolve()
     path = (directory / filename).resolve()
     if path.parent != directory or path.suffix.lower() != ".pdf" or not path.is_file():
