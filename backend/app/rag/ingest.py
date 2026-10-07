@@ -9,12 +9,31 @@ from pathlib import Path
 from uuid import uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pypdf import PdfReader
+from pypdf import PageObject, PdfReader
 
 from ..config import get_settings
 from ..model_client import embed_texts
 from ..schemas import DocumentChunk, DocumentPage
 from .query import get_client, load_index
+
+
+def extract_page_text(page: PageObject) -> str:
+    """Extract text while omitting standalone page numbers in the bottom corners."""
+    fragments = []
+    left, bottom, right, _ = (float(value) for value in page.cropbox)
+
+    def collect(text, cm, tm, font, font_size):
+        # Use page coordinates, including transforms inside PDF form objects.
+        x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+        y = tm[4] * cm[1] + tm[5] * cm[3] + cm[5]
+        standalone_number = re.fullmatch(r"[0-9]{1,3}", unicodedata.normalize("NFKC", text).strip())
+        footer_corner = bottom <= y <= bottom + 24 and (x <= left + 30 or x >= right - 30)
+        if not (standalone_number and footer_corner):
+            fragments.append(text)
+
+    page.extract_text(visitor_text=collect)
+    text = unicodedata.normalize("NFKC", "".join(fragments))
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text).strip()
 
 
 def load_pdf(pdf_path: Path) -> list[DocumentPage]:
@@ -24,9 +43,8 @@ def load_pdf(pdf_path: Path) -> list[DocumentPage]:
         raise ValueError(f"PDF requires a password: {pdf_path.name}")
     pages = []
     for number, page in enumerate(reader.pages, start=1):
-        text = unicodedata.normalize("NFKC", page.extract_text() or "")
-        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text).strip()
-        # save each page with its document ID, filename, page number, and text content
+        text = extract_page_text(page)
+        # File page numbers belong in metadata, not the embedded passage text.
         pages.append(DocumentPage(document_id=pdf_path.stem, filename=pdf_path.name,
                                   pdf_page=number, text=text))
     if not any(page.text for page in pages):

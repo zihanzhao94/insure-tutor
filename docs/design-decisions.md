@@ -127,6 +127,13 @@ granularity. Page numbers refer to PDF file positions, which may differ from
 printed brochure page numbers. Extracted pages and chunks are also saved as JSON
 for inspection.
 
+The interface displays PDF file pages only. Extraction omits standalone numeric
+footer fragments in the bottom page corners, including off-page duplicate footer
+numbers in the supplied PDF. Detection uses text coordinates, not a page-number
+offset or a rule deleting arbitrary numeric lines. Body numbers, table values,
+headings and footnotes remain; uncertain content is retained. This conservative
+cleanup is not a general header/footer or relevance classifier.
+
 ### Answering a question
 
 1. Validate the request and run input scope/misuse checks.

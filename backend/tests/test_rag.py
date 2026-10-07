@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 import pytest
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from app.config import ROOT
 from app.model_client import ModelError
 from app.rag import ingest, query
@@ -22,6 +24,38 @@ def test_supplied_pdf_loads_all_pages_and_keeps_source_metadata():
     assert "4%" in pages[7].text
     assert "2022" in pages[7].text
     assert "21" in pages[14].text
+    assert pages[13].pdf_page == 14
+    assert pages[13].text.startswith("主要產品說明")
+    assert pages[14].text.startswith("提供資料責任")
+    assert "100" in pages[13].text and "31" in pages[13].text
+    assert "1 4% 0.25%" in pages[7].text
+    assert all(amount in pages[16].text for amount in ("5,000", "40,000", "400,000"))
+
+
+def test_cleanup_preserves_body_numbers_tables_and_footnotes():
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=600, height=800)
+    page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({
+        NameObject("/F1"): DictionaryObject({NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")})})})
+    content = DecodedStreamObject()
+    content.set_data(b"""BT /F1 10 Tf 1 0 0 1 16 14 Tm (13) Tj ET
+BT /F1 10 Tf 1 0 0 1 40 700 Tm (13) Tj ET
+BT /F1 10 Tf 1 0 0 1 40 680 Tm (Policy Year 13: 4% / 0.25%) Tj ET
+BT /F1 10 Tf 1 0 0 1 40 660 Tm (100 years; 31 days; USD 5,000.) Tj ET
+BT /F1 10 Tf 1 0 0 1 40 20 Tm (Footnote: charges continue.) Tj ET
+BT /F1 10 Tf 1 0 0 1 300 14 Tm (21) Tj ET
+q 1 0 0 1 570 0 cm BT /F1 10 Tf 1 0 0 1 0 14 Tm (14) Tj ET Q
+""")
+    page[NameObject("/Contents")] = content
+    text = ingest.extract_page_text(page)
+    assert text.startswith("13\nPolicy Year 13")
+    assert text.count("13") == 2
+    assert "14" not in text
+    assert "4% / 0.25%" in text and "USD 5,000" in text
+    assert "100 years; 31 days" in text
+    assert "Footnote: charges continue." in text
+    assert text.endswith("21")
 
 
 def test_split_does_not_cross_pages_and_uses_stable_unique_ids():

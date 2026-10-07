@@ -144,6 +144,10 @@ evals/               Source-grounded API smoke cases and runner
   prefers paragraph/line and Chinese punctuation boundaries. Defaults are
   1,000 **characters** with 150-character overlap; chunks never cross a page.
   Document IDs, filenames and one-based **PDF file pages** stay attached.
+  Standalone printed page numbers in the bottom corners are omitted using PDF
+  text coordinates before splitting. Page numbers remain metadata; body numbers,
+  table rows, section headings and footnotes are preserved. No fixed offset from
+  printed pagination is assumed.
 - **Local Chroma vector store.** `PersistentClient` stores text, vectors, page
   metadata and embedding/fingerprint settings on disk without another service.
   The application supplies its existing OpenAI embeddings explicitly; Chroma
