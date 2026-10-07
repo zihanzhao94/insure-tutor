@@ -60,8 +60,21 @@ footer { max-width: 760px; margin: 22px 0 35px; font-size: 10px; color: #8a978c;
 .answer-status { font-size: 9px; border: 1px solid #d8e4d0; border-radius: 4px; color: #648159; padding: 2px 6px; }
 .answer-status.conflict, .answer-status.insufficient_evidence { color: #917334; border-color: #e4d4ac; }
 .answer-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.9; }
-.inline-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; margin: 0 2px; padding: 0 5px; border-radius: 6px; background: #edf2e9; color: #48634c; font-size: 10px; font-weight: 600; line-height: 1; text-decoration: none; vertical-align: baseline; white-space: nowrap; }
+.inline-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; margin: 0 2px; padding: 0 5px; border: none; border-radius: 6px; background: #edf2e9; color: #48634c; font-size: 10px; font-weight: 600; line-height: 1; text-decoration: none; vertical-align: baseline; white-space: nowrap; }
 .inline-citation:hover { background: #dfe9d8; color: #254c3c; }
+.citation-dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid #dce4d9; border-radius: 16px; color: #233f43; background: #fff; box-shadow: 0 20px 80px #19362a35; overflow-y: auto; }
+.citation-dialog::backdrop { background: #18382c66; }
+.citation-dialog-content { padding: 24px; }
+.citation-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.citation-dialog-header h2 { margin: 0; font-size: 15px; color: #2e5d49; }
+.citation-close { width: 32px; height: 32px; border: none; border-radius: 8px; background: #f1f5ed; color: #496652; font-size: 23px; line-height: 1; }
+.citation-filename { margin: 16px 0 4px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.citation-page { margin: 0; color: #71827b; font-size: 12px; }
+.citation-excerpt-label { margin: 22px 0 8px; color: #61765f; font-size: 11px; font-weight: 600; }
+.citation-snippet { margin: 0; padding: 16px; max-height: 240px; overflow-y: auto; border-left: 3px solid #a5c3a0; border-radius: 0 8px 8px 0; background: #f6f8f3; font-size: 13px; line-height: 1.8; white-space: pre-line; overflow-wrap: anywhere; }
+.citation-layout-note { margin: 10px 0 20px; color: #81917c; font-size: 11px; line-height: 1.6; }
+.citation-pdf { display: inline-flex; align-items: center; gap: 18px; padding: 9px 14px; border-radius: 8px; background: #285d4e; color: #fff; font-size: 12px; text-decoration: none; }
+.citation-pdf:hover { background: #174335; }
 .citation-hint { margin: 13px 0 0; color: #81917c; font-size: 10px; line-height: 1.6; }
 .thinking { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #7c8f74; padding: 20px 0; }
 .pulse { width: 7px; height: 7px; background: #81a16d; border-radius: 50%; animation: pulse 1.2s infinite alternate; }

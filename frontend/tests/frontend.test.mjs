@@ -20,7 +20,7 @@ execFileSync(join(frontend, "node_modules", ".bin", "tsc"), [
 const compiledApi = join(output, "api.js");
 writeFileSync(compiledApi, readFileSync(compiledApi, "utf8").replace('from "./stream"', 'from "./stream.js"'));
 const { SseParser, readChatStream } = await import(pathToFileURL(join(output, "stream.js")));
-const { citationParts } = await import(pathToFileURL(join(output, "citationParts.js")));
+const { citationParts, sourceSnippet } = await import(pathToFileURL(join(output, "citationParts.js")));
 const { sendMessageStream } = await import(pathToFileURL(compiledApi));
 
 const citation = {
@@ -155,12 +155,39 @@ test("API cancellation forwards to fetch and releases an active response stream"
   }
 });
 
-test("known adjacent citations become links while unknown markers remain text", () => {
+test("known adjacent citations are resolved while unknown markers remain text", () => {
   const second = { ...citation, pdf_page: 16, url: "/api/documents/brochure.pdf#page=16" };
   const parts = citationParts("Answer [1][2]. Unknown [3], [0].", [citation, second]);
   assert.deepEqual(parts.map(part => part.type), ["text", "citation", "citation", "text"]);
   assert.deepEqual(parts.filter(part => part.type === "citation").map(part => part.number), [1, 2]);
   assert.equal(parts.at(-1).text, ". Unknown [3], [0].");
+});
+
+test("source snippets join PDF line wraps without changing language or policy figures", () => {
+  assert.equal(sourceSnippet("The Account Value\n is guaranteed\t after 15 years.\n\nRate: 2.5% p.a."),
+    "The Account Value is guaranteed after 15 years. Rate: 2.5% p.a.");
+  assert.equal(sourceSnippet("保 單生效\n滿15年 , 賬戶價\n值包含 2.5% 及 HKD 48,000。"),
+    "保單生效滿15年 , 賬戶價值包含 2.5% 及 HKD 48,000。");
+  assert.equal(sourceSnippet("1 4% 0.25%\n2 4% 0.25%"), "1 4% 0.25%\n2 4% 0.25%");
+});
+
+test("long snippets mark truncation without splitting Unicode or monetary values", () => {
+  const prefix = "文".repeat(415) + " ";
+  assert.equal(sourceSnippet(prefix + "48,000.25% more text"), "文".repeat(415) + "…");
+  const sentence = "文".repeat(300) + "。";
+  assert.equal(sourceSnippet(sentence + "文".repeat(200)), sentence + "…");
+  assert.equal(sourceSnippet("文".repeat(419) + "𠮷" + "文".repeat(20)), "文".repeat(419) + "𠮷…");
+});
+
+test("source previews favor the cited claim's passage instead of an unrelated chunk opening", () => {
+  const source = "Premium levy applies in Hong Kong. " + "Other information. ".repeat(30)
+    + "The cooling-off period is 21 calendar days from policy delivery. All premiums may be refunded subject to conditions.";
+  const preview = sourceSnippet(source, "The cooling-off period is 21 calendar days.");
+  assert.ok(preview.startsWith("…"));
+  assert.ok(preview.includes("The cooling-off period is 21 calendar days from policy delivery."));
+  assert.ok(!preview.includes("Premium levy"));
+  const chinese = "其他資料。".repeat(120) + "保單冷靜期為21個曆日，從交付保單或通知書的較早日期起計。";
+  assert.ok(sourceSnippet(chinese, "保單冷靜期為21個曆日。").includes("保單冷靜期為21個曆日"));
 });
 
 test("citation parsing preserves plain text and rejects non-document URLs", () => {

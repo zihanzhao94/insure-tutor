@@ -160,11 +160,12 @@ def test_index_rejects_embedding_configuration_change(monkeypatch, tmp_path):
 def test_answer_has_server_resolved_citations(monkeypatch, tmp_path):
     source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
     monkeypatch.setattr(query, "retrieve", lambda *a: [source])
-    monkeypatch.setattr(query, "generate_answer", lambda messages: json.dumps({"status": "answered", "claims": [{"text": "The cooling-off period is 21 days.", "evidence": [{"chunk_id": source.chunk_id, "quote": source.text}]}]}))
+    monkeypatch.setattr(query, "generate_answer", lambda messages: json.dumps({"status": "answered", "claims": [{"text": "The cooling-off period is 21 days.", "evidence": [{"chunk_id": source.chunk_id}]}]}))
     answer, citations, status = query.answer_question("insurance cooling-off?", "en", tmp_path)
     assert status == "answered" and "[1]" in answer
     assert citations[0].pdf_page == 1
     assert citations[0].url == "/api/documents/plan.pdf#page=1"
+    assert citations[0].excerpt == source.text
 
 
 @pytest.mark.parametrize("ui_language,text", [

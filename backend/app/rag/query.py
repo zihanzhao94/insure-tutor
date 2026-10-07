@@ -114,7 +114,7 @@ def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChu
 def _citation(chunk: DocumentChunk, excerpt: str) -> Citation:
     """Build a source citation and PDF page link from server-owned chunk metadata."""
     return Citation(document_id=chunk.document_id, filename=chunk.filename,
-                    pdf_page=chunk.pdf_page, excerpt=excerpt, chunk_id=chunk.chunk_id,
+                    pdf_page=chunk.pdf_page, excerpt=excerpt or chunk.text, chunk_id=chunk.chunk_id,
                     url=f"/api/documents/{quote(chunk.filename, safe='')}#page={chunk.pdf_page}")
 
 
