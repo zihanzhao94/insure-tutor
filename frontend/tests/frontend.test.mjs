@@ -28,7 +28,7 @@ const citation = {
   excerpt: "Original text", chunk_id: "p8:c1", url: "/api/documents/brochure.pdf#page=8",
 };
 const response = {
-  answer: "这是完整回答。 [1]", language: "zh-Hans", session_id: "a".repeat(32),
+  answer: "这是完整回答。 [1]", session_id: "a".repeat(32),
   citations: [citation], status: "answered", mode: "llm",
 };
 const event = (name, data) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -52,7 +52,7 @@ test("SSE framing handles split CRLF, comments and multiline data", () => {
 test("SSE decodes fragmented Chinese bytes and completes on the final result", async () => {
   const received = [];
   const stream = byteStream(
-    event("start", { session_id: response.session_id, language: response.language, mode: response.mode }) +
+    event("start", { session_id: response.session_id, mode: response.mode }) +
     event("status", { phase: "generating" }) +
     event("delta", { text: response.answer, citations: [citation] }) +
     event("result", response),
@@ -126,7 +126,7 @@ test("API cancellation forwards to fetch and releases an active response stream"
   const stream = new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode(event("start", {
-        session_id: response.session_id, language: response.language, mode: response.mode,
+        session_id: response.session_id, mode: response.mode,
       })));
       // Hold the response open while the next model claim is pending.
     },
@@ -134,6 +134,7 @@ test("API cancellation forwards to fetch and releases an active response stream"
   });
   try {
     globalThis.fetch = async (_url, options) => {
+      assert.deepEqual(JSON.parse(options.body), { message: "Explain the guarantee", ui_language: "en" });
       fetchSignal = options.signal;
       return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
     };
@@ -141,7 +142,7 @@ test("API cancellation forwards to fetch and releases an active response stream"
     const controller = new AbortController();
     let firstEvent;
     const started = new Promise(resolve => { firstEvent = resolve; });
-    const pending = sendMessageStream({ message: "Explain the guarantee", language: "en" }, () => firstEvent(), controller.signal);
+    const pending = sendMessageStream({ message: "Explain the guarantee", ui_language: "en" }, () => firstEvent(), controller.signal);
     await started;
     controller.abort();
     await assert.rejects(pending, error => error.name === "AbortError");

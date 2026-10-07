@@ -5,7 +5,7 @@ import type { ChatResponse, Citation, Health, Language } from "../types";
 import type { StreamPhase } from "../stream";
 import AnswerText from "./AnswerText";
 interface Draft {
-  answer: string; citations: Citation[]; language: Language;
+  answer: string; citations: Citation[];
   mode: ChatResponse["mode"]; phase: StreamPhase;
 }
 interface Turn { question: string; response?: ChatResponse; draft?: Draft; }
@@ -40,7 +40,7 @@ export default function Chat({ language }: { language: Language }) {
     activeRequest.current = controller;
     setBusy(true); setError(""); setQuestion("");
     setTurns(previous => [...previous, { question: text, draft: {
-      answer: "", citations: [], language, mode: health?.mode || "llm", phase: "classifying",
+      answer: "", citations: [], mode: health?.mode || "llm", phase: "classifying",
     } }]);
     function updateDraft(update: (draft: Draft) => Draft) {
       if (activeRequest.current !== controller || controller.signal.aborted) return;
@@ -48,12 +48,12 @@ export default function Chat({ language }: { language: Language }) {
         ? { ...turn, draft: update(turn.draft) } : turn));
     }
     try {
-      const response = await sendMessageStream({ message: text, language, session_id: session.current }, event => {
+      const response = await sendMessageStream({ message: text, ui_language: language, session_id: session.current }, event => {
         if (activeRequest.current !== controller || controller.signal.aborted) return;
         switch (event.event) {
           case "start":
             session.current = event.data.session_id;
-            updateDraft(draft => ({ ...draft, language: event.data.language, mode: event.data.mode }));
+            updateDraft(draft => ({ ...draft, mode: event.data.mode }));
             break;
           case "status":
             updateDraft(draft => ({ ...draft, phase: event.data.phase }));

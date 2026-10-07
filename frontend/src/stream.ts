@@ -1,8 +1,8 @@
-import type { ChatResponse, Citation, Language } from "./types";
+import type { ChatResponse, Citation } from "./types";
 
 export type StreamPhase = "classifying" | "retrieving" | "generating" | "checking";
 export type ChatStreamEvent =
-  | { event: "start"; data: { session_id: string; language: Language; mode: ChatResponse["mode"] } }
+  | { event: "start"; data: { session_id: string; mode: ChatResponse["mode"] } }
   | { event: "status"; data: { phase: StreamPhase } }
   | { event: "delta"; data: { text: string; citations: Citation[] } }
   | { event: "reset"; data: Record<string, never> }

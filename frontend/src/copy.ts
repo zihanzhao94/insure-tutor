@@ -1,7 +1,7 @@
 import type { Language } from "./types";
 const en = {
   sourceLibrary: "SOURCE LIBRARY", documentType: "Product brochure · English / 中文",
-  subtitle: "Your guide to the fine print", language: "Answer language", newChat: "New conversation",
+  subtitle: "Your guide to the fine print", language: "Interface language", newChat: "New conversation",
   eyebrow: "DOCUMENT-GROUNDED INSURANCE TUTOR", title: "Understand your cover.",
   introduction: "Ask about FLEXI-ULife Prime Saver. Explore benefits, conditions and charges, with references to the original brochure.",
   examples: ["Is the 4% interest rate guaranteed?", "What happens if I stop paying premiums?", "How does the cooling-off period work?"],
@@ -19,7 +19,7 @@ const en = {
 };
 const hans: typeof en = {
   sourceLibrary: "来源文档", documentType: "产品宣传册 · English / 中文",
-  subtitle: "读懂保险条款", language: "回答语言", newChat: "新对话",
+  subtitle: "读懂保险条款", language: "界面语言", newChat: "新对话",
   eyebrow: "基于文档的保险问答", title: "了解保障，读懂细节。",
   introduction: "询问首选灵活万用寿险计划的保障、条件和费用，查看回答对应的宣传册原文。",
   examples: ["4%的利率是保证的吗？", "停止缴付保费会怎样？", "冷静期如何计算？"],
@@ -36,7 +36,7 @@ const hans: typeof en = {
   statuses: { answered: "附有原文依据", insufficient_evidence: "证据不足", out_of_scope: "超出范围", blocked: "请求已拒绝", conflict: "来源存在差异", clarification_required: "请补充说明" },
 };
 const hant: typeof en = {
-  ...hans, sourceLibrary: "來源文檔", documentType: "產品宣傳冊 · English / 中文", subtitle: "讀懂保險條款", language: "回答語言", newChat: "新對話",
+  ...hans, sourceLibrary: "來源文檔", documentType: "產品宣傳冊 · English / 中文", subtitle: "讀懂保險條款", language: "介面語言", newChat: "新對話",
   eyebrow: "基於文檔的保險問答", title: "了解保障，讀懂細節。",
   introduction: "詢問首選靈活萬用壽險計劃的保障、條件和費用，查看回答對應的宣傳冊原文。",
   examples: ["4%的利率是保證的嗎？", "停止繳付保費會怎樣？", "冷靜期如何計算？"],

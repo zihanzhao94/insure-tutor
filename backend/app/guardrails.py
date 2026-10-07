@@ -173,5 +173,6 @@ def source_conflict(question: str, evidence: list[DocumentChunk], language: Lang
             explanation = f"For the minimum increase/decrease in sum insured, the Chinese row states {chinese}, while the English row states {english}. The HKD and MOP amounts disagree; the brochure does not establish which version is correct. Confirm the amount with the insurer."
         else:
             explanation = f"增加或减少保障额的最低金额，中文一行写为 {chinese}，英文一行写为 {english}。港元与澳门元金额不一致，宣传册无法确定哪一版正确，请向保险公司确认。"
-        return GeneratedAnswer.model_validate({"status": "conflict", "claims": [{"text": explanation, "evidence": [{"chunk_id": chunk.chunk_id}]}]})
+        # This is a predefined source-discrepancy notice, not generated model text.
+        return GeneratedAnswer.model_validate({"status": "conflict", "claims": [{"text": localize(explanation, language), "evidence": [{"chunk_id": chunk.chunk_id}]}]})
     return None

@@ -31,7 +31,7 @@ def _chat_events(request, *, streaming):
     if not question:
         raise ValueError("Please enter a question.")
     yield {"event": "start", "data": {"session_id": session_id,
-           "language": request.language, "mode": settings.chat_mode}}
+           "mode": settings.chat_mode}}
     history = load_history(session_id, settings.data_dir)
     rejection = check_input(question, has_history=bool(history), rules_only=settings.chat_mode == "extractive")
     category = "document_qa"
@@ -43,10 +43,10 @@ def _chat_events(request, *, streaming):
         rejection = {"personal_advice": "out_of_scope", "out_of_scope": "out_of_scope",
                      "blocked": "blocked", "uncertain": "clarification_required"}.get(category)
     if rejection:
-        answer = message(rejection, request.language)
+        answer = message(rejection, request.ui_language)
         if rejection == "clarification_required":
             save_turn(session_id, question, answer, settings.data_dir)
-        response = ChatResponse(answer=answer, language=request.language,
+        response = ChatResponse(answer=answer,
                                 session_id=session_id, status=rejection, mode=settings.chat_mode)
         yield {"event": "result", "data": response.model_dump()}
         return
@@ -64,7 +64,7 @@ def _chat_events(request, *, streaming):
     yield {"event": "status", "data": {"phase": "retrieving"}}
     if streaming:
         final = None
-        for event in stream_answer_question(query, request.language, settings.data_dir / "index", **options):
+        for event in stream_answer_question(query, request.ui_language, settings.data_dir / "index", **options):
             if event["event"] == "result":
                 final = event["data"]
             else:
@@ -73,8 +73,8 @@ def _chat_events(request, *, streaming):
             raise ValueError("The answer stream ended before completion.")
         answer, citations, status = final["answer"], final["citations"], final["status"]
     else:
-        answer, citations, status = answer_question(query, request.language, settings.data_dir / "index", **options)
-    response = ChatResponse(answer=answer, language=request.language, session_id=session_id,
+        answer, citations, status = answer_question(query, request.ui_language, settings.data_dir / "index", **options)
+    response = ChatResponse(answer=answer, session_id=session_id,
                             citations=citations, status=status, mode=settings.chat_mode)
     save_turn(session_id, question, answer, settings.data_dir)
     yield {"event": "result", "data": response.model_dump()}

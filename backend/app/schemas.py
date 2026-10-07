@@ -42,7 +42,8 @@ class DocumentChunk(DocumentPage):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
-    language: Language = "en"
+    # Used only for predefined system notices, never to direct generated text.
+    ui_language: Language = "en"
     session_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
@@ -57,7 +58,6 @@ class Citation(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
-    language: Language
     session_id: str
     citations: list[Citation] = Field(default_factory=list)
     status: Literal["answered", "insufficient_evidence", "out_of_scope", "blocked", "conflict", "clarification_required"] = "answered"

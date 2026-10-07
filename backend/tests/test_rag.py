@@ -167,6 +167,38 @@ def test_answer_has_server_resolved_citations(monkeypatch, tmp_path):
     assert citations[0].url == "/api/documents/plan.pdf#page=1"
 
 
+@pytest.mark.parametrize("ui_language,text", [
+    ("en", "保單冷靜期為21天。"),
+    ("zh-Hans", "保單冷靜期為21天。"),
+    ("zh-Hant", "The cooling-off period is 21 days."),
+])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_model_selects_answer_language_without_ui_locale_or_script_conversion(
+        monkeypatch, tmp_path, ui_language, text, streaming):
+    source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
+    monkeypatch.setattr(query, "retrieve", lambda *a: [source])
+    captured = []
+    raw = json.dumps({"status": "answered", "claims": [
+        {"text": text, "evidence": [source.chunk_id]}]}, ensure_ascii=False)
+    def generate(messages):
+        captured.append(messages)
+        return raw
+    monkeypatch.setattr(query, "generate_answer", generate)
+    monkeypatch.setattr(query, "stream_answer", lambda messages: iter([generate(messages)]))
+    question = "Explain the cooling-off period; use the language I request in this question."
+    if streaming:
+        events = list(query.stream_answer_question(question, ui_language, tmp_path))
+        final = next(event["data"] for event in events if event["event"] == "result")
+        answer = final["answer"]
+        assert text in "".join(event["data"]["text"] for event in events if event["event"] == "delta")
+    else:
+        answer, _, _ = query.answer_question(question, ui_language, tmp_path)
+    assert answer.startswith(text + " [1]")
+    prompt = json.loads(captured[0][1]["content"])
+    assert set(prompt) == {"question", "passages"} and prompt["question"] == question
+    assert "requested language (English" not in captured[0][0]["content"]
+
+
 @pytest.mark.parametrize("raw", ['not json', '{"status":"answered","claims":[]}', '{"status":"conflict","claims":[]}'])
 def test_malformed_or_empty_answer_fails_closed(monkeypatch, tmp_path, raw):
     monkeypatch.setattr(query, "retrieve", lambda *a: [chunk()])
@@ -217,6 +249,8 @@ def test_overview_repairs_bad_citations_once_then_validates_again(monkeypatch, t
         calls.append(len(messages))
         if len(calls) == 2:
             assert "failed source/number validation" in messages[-1]["content"]
+            assert "not a new end-user question" in messages[-1]["content"]
+            assert "original end-user question" in messages[-1]["content"]
         days = 21 if len(calls) == 2 and repair_succeeds else 99
         return json.dumps({"status": "answered", "claims": [
             {"text": f"The cooling-off period is {days} days.", "evidence": [source.chunk_id]}]})

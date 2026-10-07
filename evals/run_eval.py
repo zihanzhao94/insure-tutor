@@ -22,10 +22,10 @@ def main():
     results = []
     with httpx.Client(base_url=args.url.rstrip("/"), timeout=120) as client:
         for case in cases:
-            request = {"message": case["question"], "language": case["language"]}
+            request = {"message": case["question"], "ui_language": case["language"]}
             try:
                 if case.get("prerequisite_question"):
-                    prerequisite = client.post("/api/chat", json={"message": case["prerequisite_question"], "language": case["language"]})
+                    prerequisite = client.post("/api/chat", json={"message": case["prerequisite_question"], "ui_language": case["language"]})
                     prerequisite.raise_for_status()
                     request["session_id"] = prerequisite.json()["session_id"]
                 response = client.post("/api/chat", json=request)
