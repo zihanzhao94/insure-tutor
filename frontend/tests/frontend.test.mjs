@@ -14,7 +14,7 @@ writeFileSync(join(output, "package.json"), '{"type":"module"}');
 execFileSync(join(frontend, "node_modules", ".bin", "tsc"), [
   "--target", "ES2022", "--module", "ES2022", "--moduleResolution", "Bundler",
   "--lib", "ES2022,DOM", "--skipLibCheck", "--strict", "--outDir", output,
-  join(frontend, "src", "stream.ts"), join(frontend, "src", "citationParts.ts"), join(frontend, "src", "api.ts"),
+  join(frontend, "src", "stream.ts"), join(frontend, "src", "citationParts.ts"), join(frontend, "src", "api.ts"), join(frontend, "src", "progressiveText.ts"),
 ]);
 // The browser's bundler resolves extensionless imports; native Node ESM needs .js.
 const compiledApi = join(output, "api.js");
@@ -22,6 +22,7 @@ writeFileSync(compiledApi, readFileSync(compiledApi, "utf8").replace('from "./st
 const { SseParser, readChatStream } = await import(pathToFileURL(join(output, "stream.js")));
 const { citationParts, sourceSnippet } = await import(pathToFileURL(join(output, "citationParts.js")));
 const { sendMessageStream } = await import(pathToFileURL(compiledApi));
+const { ProgressiveText } = await import(pathToFileURL(join(output, "progressiveText.js")));
 
 const citation = {
   document_id: "brochure", filename: "brochure.pdf", pdf_page: 8,
@@ -179,20 +180,69 @@ test("long snippets mark truncation without splitting Unicode or monetary values
   assert.equal(sourceSnippet("文".repeat(419) + "𠮷" + "文".repeat(20)), "文".repeat(419) + "𠮷…");
 });
 
-test("source previews favor the cited claim's passage instead of an unrelated chunk opening", () => {
-  const source = "Premium levy applies in Hong Kong. " + "Other information. ".repeat(30)
-    + "The cooling-off period is 21 calendar days from policy delivery. All premiums may be refunded subject to conditions.";
-  const preview = sourceSnippet(source, "The cooling-off period is 21 calendar days.");
-  assert.ok(preview.startsWith("…"));
-  assert.ok(preview.includes("The cooling-off period is 21 calendar days from policy delivery."));
-  assert.ok(!preview.includes("Premium levy"));
-  const chinese = "其他資料。".repeat(120) + "保單冷靜期為21個曆日，從交付保單或通知書的較早日期起計。";
-  assert.ok(sourceSnippet(chinese, "保單冷靜期為21個曆日。").includes("保單冷靜期為21個曆日"));
-});
-
 test("citation parsing preserves plain text and rejects non-document URLs", () => {
   const text = '<script>alert("x")</script> [1]';
   assert.deepEqual(citationParts(text, [{ ...citation, url: "javascript:alert(1)" }]), [{ type: "text", text }]);
   assert.deepEqual(citationParts("No references.", []), [{ type: "text", text: "No references." }]);
   assert.deepEqual(citationParts("", [citation]), []);
+});
+
+function playbackHarness() {
+  let next = 0, time = 0;
+  const frames = new Map(), updates = [];
+  const playback = new ProgressiveText(text => updates.push(text),
+    callback => { frames.set(++next, callback); return next; }, id => frames.delete(id));
+  function tick() {
+    time += 16;
+    const pending = [...frames.values()]; frames.clear();
+    pending.forEach(callback => callback(time));
+  }
+  function finish() {
+    for (let i = 0; frames.size && i < 10000; i++) tick();
+    assert.equal(frames.size, 0);
+  }
+  return { playback, updates, frames, tick, finish };
+}
+
+test("playback progressively reveals live appends and the canonical final suffix", () => {
+  const h = playbackHarness();
+  const first = "The cooling-off period is 21 days. [1]";
+  h.playback.update(first); h.tick();
+  assert.ok(h.updates[0].length > 0 && h.updates[0].length < first.length);
+  const final = first + "\n\nPremiums are refunded subject to conditions. [2]\n\nDisclaimer.";
+  h.playback.update(final); h.finish();
+  assert.equal(h.updates.at(-1), final);
+  for (let i = 1; i < h.updates.length; i++) assert.ok(h.updates[i].startsWith(h.updates[i - 1]));
+});
+
+test("playback preserves Unicode and exposes citation markers atomically", () => {
+  const h = playbackHarness();
+  const final = "保單𠮷😀冷靜期為21天。 [12][1]";
+  h.playback.update(final); h.finish();
+  assert.equal(h.updates.at(-1), final);
+  for (const text of h.updates) {
+    assert.equal(text.isWellFormed(), true);
+    assert.ok(!/\[\d*$/.test(text));
+  }
+});
+
+test("rejection/reset replaces queued text immediately and discards pending animation", () => {
+  const h = playbackHarness();
+  h.playback.update("A supported preview that is still typing. [1]"); h.tick();
+  h.playback.update("Insufficient evidence.", false);
+  assert.equal(h.updates.at(-1), "Insufficient evidence.");
+  assert.equal(h.frames.size, 0); h.tick();
+  assert.equal(h.updates.at(-1), "Insufficient evidence.");
+  h.playback.update("", false);
+  h.playback.update("A repaired answer. [2]"); h.finish();
+  assert.equal(h.updates.at(-1), "A repaired answer. [2]");
+});
+
+test("disposing canceled playback prevents late text updates", () => {
+  const h = playbackHarness();
+  h.playback.update("An answer is arriving."); h.tick();
+  const count = h.updates.length;
+  h.playback.dispose(); h.tick(); h.playback.update("Late result.");
+  assert.equal(h.updates.length, count);
+  assert.equal(h.frames.size, 0);
 });

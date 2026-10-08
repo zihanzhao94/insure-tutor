@@ -5,8 +5,8 @@ import { copy } from "../copy";
 import type { Citation, Language } from "../types";
 
 /** Show original evidence with native focus trapping and Escape dismissal. */
-export default function CitationDialog({ citation, number, claim, language, onClose }: {
-  citation: Citation; number: number; claim: string; language: Language; onClose: () => void;
+export default function CitationDialog({ citation, number, language, onClose }: {
+  citation: Citation; number: number; language: Language; onClose: () => void;
 }) {
   const t = copy(language);
   const title = useId();
@@ -29,7 +29,7 @@ export default function CitationDialog({ citation, number, claim, language, onCl
       <p className="citation-filename">{citation.filename}</p>
       <p className="citation-page">{t.page} {citation.pdf_page}</p>
       <p className="citation-excerpt-label">{t.sourceExcerpt}</p>
-      <blockquote className="citation-snippet">{sourceSnippet(citation.excerpt, claim)}</blockquote>
+      <blockquote className="citation-snippet">{sourceSnippet(citation.excerpt)}</blockquote>
       <p className="citation-layout-note">{t.sourceLayoutNote}</p>
       <a className="citation-pdf" href={citation.url} target="_blank" rel="noreferrer">{t.viewPdf} <span aria-hidden="true">↗</span></a>
     </div>

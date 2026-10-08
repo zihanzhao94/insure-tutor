@@ -109,7 +109,8 @@ export default function Chat({ language }: { language: Language }) {
           {!!answer?.answer && <div className="answer"><div className="answer-header"><span className="message-label">{t.assistant}</span>
             {turn.response && <span className={`answer-status ${turn.response.status}`}>{t.statuses[turn.response.status]}</span>}</div>
             {answer.mode === "extractive" && <p className="mode-label">{t.extracted}</p>}
-            <AnswerText answer={answer.answer} citations={answer.citations} language={language} />
+            <AnswerText answer={answer.answer} citations={answer.citations} language={language}
+              animate={i === turns.length - 1 && answer.mode === "llm" && (!turn.response || ["answered", "conflict"].includes(turn.response.status))} />
             {!!answer.citations.length && <p className="citation-hint">{t.citationHint}</p>}
           </div>}
         </article>;

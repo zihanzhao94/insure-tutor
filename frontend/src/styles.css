@@ -56,6 +56,7 @@ footer { max-width: 760px; margin: 22px 0 35px; font-size: 10px; color: #8a978c;
 .answer-status { font-size: 9px; border: 1px solid #d8e4d0; border-radius: 4px; color: #648159; padding: 2px 6px; }
 .answer-status.conflict, .answer-status.insufficient_evidence { color: #917334; border-color: #e4d4ac; }
 .answer-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.9; }
+.typing-cursor { display: inline-block; width: 2px; height: 1em; margin-left: 3px; background: #48634c; vertical-align: -.1em; animation: pulse .7s infinite alternate; }
 .inline-citation { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; margin: 0 2px; padding: 0 5px; border: none; border-radius: 6px; background: #edf2e9; color: #48634c; font-size: 10px; font-weight: 600; line-height: 1; text-decoration: none; vertical-align: baseline; white-space: nowrap; }
 .inline-citation:hover { background: #dfe9d8; color: #254c3c; }
 .citation-dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid #dce4d9; border-radius: 16px; color: #233f43; background: #fff; box-shadow: 0 20px 80px #19362a35; overflow-y: auto; }
