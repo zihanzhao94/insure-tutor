@@ -1,31 +1,17 @@
 # InsureTutor
 
 A bilingual insurance tutor for the supplied **FLEXI-ULife Prime Saver** brochure.
-Ask questions in English, Simplified Chinese, or Traditional Chinese; follow up
-in the same conversation; click inline citations to preview the original evidence.
-Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings. Answers appear
-as validated paragraphs arrive and unfold progressively, with compact reference
-links beside each claim.
-Click a reference to open a dialog with its filename, PDF file page, a short
-original excerpt and a **View PDF** link to that page. The server selects a stable
-original passage for each reference using shared claim terms and numbers. Within
-an answer, the same source text at the same file/page reuses a number; different
-passages on one page get different numbers. Every occurrence of a number shows
-the same snippet. The display joins wrapped
-lines and spaced Chinese characters, while preserving English words and policy
-figures. Numeric rows retain their line breaks. Long excerpts are shortened with
-an ellipsis; the PDF retains the original
-table layout. Close the dialog with its close button, Escape or the backdrop.
-The language selector sets the interface, the fixed system notices and the
-answer language: the selection is sent to the model with each question, so
-answers stay in one language and Chinese script regardless of the source text.
-An explicit request in the question to answer in another language still takes
-precedence. This is a prompt instruction; generated text is not translated or
-converted between Chinese scripts by the application afterwards.
+Ask questions in English, Simplified Chinese or Traditional Chinese, follow up
+in the same conversation, and click the numbered references beside each
+statement to see the original passage and open the PDF at that page.
+
+Built with React/TypeScript, FastAPI, Chroma, and OpenAI chat and embedding models.
+
+![InsureTutor source preview with original excerpt and View PDF](docs/citation-preview.png)
 
 ## Quick start with Docker
 
-Requires Docker Desktop / Docker Engine with Compose and an OpenAI API key.
+Requires Docker with Compose and an OpenAI API key.
 
 ```sh
 cp .env.example .env
@@ -37,24 +23,26 @@ docker compose up --build
 - API docs: <http://localhost:8000/docs>
 - Setup status: <http://localhost:8000/api/health>
 
-Startup automatically extracts the source PDF, builds embeddings, and persists
-the index. The initial startup requires API access; unchanged PDFs/settings
-reuse the saved index. Source PDFs are mounted read-only. Changes to `.env`
-require restarting the backend (`docker compose up -d --force-recreate backend`).
-The demo frontend uses the Vite development server.
-
-**Credentials stay on the backend.** PDFs, extracted text, vectors and session
-records are stored locally. OpenAI receives document text during embedding,
-and questions/retrieved passages during answering. This is not an offline model.
-Do not put sensitive documents into the demo without considering this data flow.
+The first start extracts the PDF, builds embeddings and saves the index, so it
+needs API access; later starts reuse the saved index. If the page shows
+"Unable to connect" while the backend is still starting, refresh it. After
+changing `.env`, run `docker compose up -d --force-recreate backend`.
 
 Try:
 
-- “Is the 4% interest rate guaranteed?”
-- “停止缴付保费会怎样？”
-- “保單冷靜期有多久？從何時開始計算？”
-- “What is the minimum increase or decrease in sum insured?”
-- “What is the guaranteed account value?” → “And when does it apply?”
+- "Is the 4% interest rate guaranteed?"
+- "停止缴付保费会怎样？"
+- "保單冷靜期有多久？從何時開始計算？"
+- "What is the minimum increase or decrease in sum insured?"
+- "What is the guaranteed account value?" → "And when does it apply?"
+
+The language selector sets the interface, the fixed notices and the answer
+language. An explicit request in a question to answer in another language
+takes precedence.
+
+**Data flow.** The API key stays on the backend. PDFs, extracted text, vectors
+and conversations are stored locally. OpenAI receives document text during
+embedding, and questions with retrieved passages during answering.
 
 ## Local development
 
@@ -64,8 +52,7 @@ Use Python 3.11+ and Node 22.12+ or Node 24. From the repository root:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-cp .env.example .env  # Skip if you already configured .env.
-# Set MODEL_API_KEY in .env.
+cp .env.example .env  # then set MODEL_API_KEY
 uvicorn app.main:app --app-dir backend --reload --port 8000
 ```
 
@@ -77,45 +64,25 @@ npm ci
 npm run dev
 ```
 
-Vite proxies `/api` to port 8000. Docker sets `BACKEND_URL` to its backend
-service. The backend loads the repository `.env`; explicitly exported variables
-have precedence. Never commit the real `.env`.
+Vite proxies `/api` to port 8000. Exported environment variables take
+precedence over `.env`.
 
-To rebuild manually or inspect extracted records:
+To rebuild the index manually:
 
 ```sh
 PYTHONPATH=backend .venv/bin/python -m app.rag.ingest --force
-# data/processed/pages.json and chunks.json contain inspectable source text.
-# Docker equivalent:
-docker compose exec backend python -m app.rag.ingest --force
+# Docker: docker compose exec backend python -m app.rag.ingest --force
 ```
 
-Use one ingestion process at a time. Restart after changing source files or
-chunk/model settings. Ingestion builds a new Chroma collection, then atomically
-updates `data/index/active_collection.json` after all writes succeed. Failed
-embedding or storage leaves the previous collection active. Previous collections
-are retained locally; this demo does not perform automatic index cleanup.
+Ingestion writes a new Chroma collection and switches to it only after every
+write succeeds, so a failed build leaves the previous index active. The index
+is rebuilt automatically when the PDFs, chunk settings or embedding settings
+change; use `--force` after changing extraction or splitting code.
 
-The fingerprint tracks PDF contents, chunk settings, and embedding configuration.
-If extraction, splitting, or vector-processing code changes, use `--force` to
-rebuild; this demo does not maintain a separate index version.
-
-The source library displays filenames from the active index via `/api/health`,
-including a separate PDF link for each document. The welcome screen has no fixed
-suggested questions or product name. To replace the source files, update the PDFs
-in `data/raw/`, restart the backend with `AUTO_INGEST=true` (the default), and
-refresh the interface. With automatic ingestion disabled, run manual ingestion
-instead. Copying files into the directory alone does not update the active index.
-There is no browser upload flow.
-
-This makes source display dynamic, but the answer prompts and known-conflict
-handling still contain checks tailored to the supplied FLEXI-ULife brochure.
-Using another product requires reviewing those rules and running new source-grounded
-evaluations; a changed filename is not evidence of general document support.
-
-The former `data/index/index.sqlite` vector file is no longer read. The first
-startup after this migration builds Chroma from the source PDF; later startups
-reuse it. The old file can remain as a local backup.
+To use other source files, replace the PDFs in `data/raw/` and restart the
+backend. The source list in the interface follows the active index, but the
+answer prompts and the known-conflict check are tailored to this brochure, so
+another product needs those reviewed and new evaluation cases.
 
 ## Architecture
 
@@ -135,35 +102,12 @@ flowchart LR
     API -->|SSE updates and authoritative final answer| UI
 ```
 
-![InsureTutor source preview with original excerpt and View PDF](docs/citation-preview.png)
-
-The editable module diagram is in [docs/architecture.drawio](docs/architecture.drawio).
-The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requirements.
-The [design and technology decisions](docs/design-decisions.md) explain the
-architecture, selection rationale, RAG parameters and implementation tradeoffs.
-
-### What “claim” means in this code
-
-A `GroundedClaim` is **one statement in the tutor's answer**, not a customer's
-insurance claim (理赔申请). For example, an answer might contain the statement
-“The cooling-off period is 21 days” with one `evidence` entry naming the
-retrieved PDF chunk that supports it. The model proposes the wording and chunk
-ID; the backend looks up that chunk, checks the citation and numbers, then
-renders the statement with a numbered PDF reference. Another statement about
-when the period begins would be a separate claim and might need a different
-source. A chunk is source material; a claim is answer text. One claim can cite
-up to four chunks, and one generated answer can contain up to six claims.
-
-These checks establish that the cited passage exists and contains the claimed
-numbers. They do not establish that every paraphrase or inference is correct,
-so insurance conditions and exclusions still need human review.
-
 ```text
 backend/app/
 ├── main.py          API endpoints, PDF serving and startup indexing
 ├── chat.py          Scope checks, follow-up context and conversation orchestration
+├── guardrails.py    Input rules, AI intent classification and evidence validation
 ├── model_client.py  Provider calls and embeddings
-├── guardrails.py    AI intent classification, input rules and evidence validation
 ├── storage.py       SQLite conversation history
 ├── config.py        Environment settings
 ├── schemas.py       Typed page, chunk, chat and model-output records
@@ -171,115 +115,67 @@ backend/app/
     ├── ingest.py    load_pdf → split_pages → build_index (offline)
     └── query.py     load_index → retrieve → answer_question (online)
 frontend/src/        React chat, SSE reader, language selector and inline citations
-data/raw/            Original source PDF
-data/processed/      Extracted pages/chunks (generated; ignored)
-data/index/chroma/   Chroma text, vectors and metadata (generated; ignored)
-data/index/active_collection.json  Completed collection pointer (generated; ignored)
-data/sessions/       Conversation database (generated; ignored)
-backend/tests/       Non-network unit/API tests
-evals/               Source-grounded API smoke cases and runner
+backend/tests/       Unit and API tests that make no network calls
+evals/               End-to-end cases, retrieval parameter sweep and results
+data/raw/            Source PDF (index, extracted text and sessions are generated and ignored)
 ```
 
-### Key decisions
+In this code a **claim** is one statement in the tutor's answer, not an
+insurance claim (理赔申请). The model proposes the wording and the IDs of the
+retrieved chunks that support it; the backend checks them and renders the
+statement with numbered PDF references.
 
-- **Two RAG files.** Preparation and online queries have different lifecycles.
-  Splitting and vector-store access remain functions rather than separate
-  frameworks or a file per step.
-- **Page-preserving chunks.** `pypdf` extracts each page, including the supplied
-  PDF's empty-password encryption. LangChain's recursive character splitter
-  prefers paragraph/line and Chinese punctuation boundaries. Defaults are
-  1,000 **characters** with 150-character overlap; chunks never cross a page.
-  Document IDs, filenames and one-based **PDF file pages** stay attached.
-  Standalone printed page numbers in the bottom corners are omitted using PDF
-  text coordinates before splitting. Page numbers remain metadata; body numbers,
-  table rows, section headings and footnotes are preserved. No fixed offset from
-  printed pagination is assumed.
-- **Local Chroma vector store.** `PersistentClient` stores text, vectors, page
-  metadata and embedding/fingerprint settings on disk without another service.
-  The application supplies its existing OpenAI embeddings explicitly; Chroma
-  does not download or invoke a default embedding model. Chroma queries use
-  cosine distance, converted to similarity with `1 - distance`.
-  For this tiny corpus, retrieval requests all chunk distances, then adds a
-  normalized keyword/Chinese-bigram score weighted by 0.12 before selecting
-  primary chunks. This preserves lexical recall rather than introducing a
-  new candidate cutoff during the storage migration.
-  `TOP_K=5` selects primary chunks, followed by complete matching pages and
-  Notes/disclosure pages up to a 17,000-character context budget. This preserves
-  footnotes that otherwise sit apart from benefit descriptions. The supplied
-  20-page brochure produces 53 chunks with the default settings.
-- **Why Chroma.** Its embedded Python API combines document/metadata storage
-  and vector querying for this local demo. Qdrant local mode is another valid
-  choice. FAISS would still need our own document/metadata persistence;
-  pgvector would introduce PostgreSQL, which this project otherwise does not
-  need. This is a deployment/simplicity choice, not a performance benchmark.
-  See the [Chroma client documentation](https://docs.trychroma.com/reference/python/client),
-  [Qdrant client](https://github.com/qdrant/qdrant-client),
-  [FAISS](https://github.com/facebookresearch/faiss) and
-  [pgvector](https://github.com/pgvector/pgvector).
-- **Server-owned citations.** GPT returns claims and source IDs using a strict JSON schema. The backend resolves
-  original passages, filenames, PDF page links and citation numbers. It rejects
-  unknown IDs, unverifiable quotes, unsupported numeric values and malformed
-  answers; rejected output becomes an insufficient-evidence response. Numeric
-  formatting such as `4` versus `4.0` is normalized.
-- **Validated streaming.** The UI calls `POST /api/chat/stream`. OpenAI streams
-  JSON text; the backend buffers each complete claim and checks its sources and
-  numbers before sending a paragraph and its citations. It never exposes partial
-  JSON or an unchecked claim. The final full response replaces provisional text,
-  and only that response is saved. One bounded source/number repair is available
-  after validation fails; a failed repair clears its preview;
-  provider errors remove the incomplete turn. The frontend progressively reveals
-  validated text using animation frames, including queued text after the final
-  response arrives. Citation markers appear atomically. A rejection or reset
-  immediately replaces the preview and clears queued text; Stop also cancels
-  playback. Reduced-motion users receive immediate updates. The server still
-  validates complete claims before display. `POST /api/chat` remains available as JSON
-  for evaluation and other clients. The optional Claude adapter remains buffered.
-- **Conversation context.** Random session IDs isolate local SQLite histories.
-  The latest three completed question/answer turns are supplied to intent routing
-  and answer generation. Likely follow-ups add recent user questions to retrieval;
-  earlier assistant answers are context only, while factual support must still
-  come from fresh retrieval and citations. Set `MEMORY_TURNS` to adjust the window. New
-  conversation clears the UI session. Refreshing starts a new conversation;
-  this demo has no user accounts or conversation browser.
-- **Layered guardrails.** Rules block common override/secret/fabrication attempts.
-  A separate short call to the configured chat model returns a validated intent
-  category, using recent conversation for follow-ups. Fixed code routes document
-  questions to RAG and rejects unrelated/personal-advice requests. Unclear input
-  requests clarification. Provider errors and malformed labels are reported as
-  API failures and never allow retrieval. Clear questions do not need an insurance
-  keyword, and missing source evidence is decided after retrieval. The classifier
-  treats the brochure as the implicit subject of broad insurance questions (for
-  example about coverage options). A few common "what should I watch for"
-  phrasings are scoped to the brochure before classification; personal advice and
-  unrelated requests still use the intent guardrail. Broad caution summaries stay qualitative:
-  unsupported figures and rate/return claims are withheld for repair.
-  Overviews include the brochure's at-a-glance table and retrieve five fixed
-  topics (benefits, premiums/charges, cancellation, interest and exclusions).
-  They interleave/deduplicate sources and keep the same
-  17,000-character budget. This adds five query embeddings rather than one.
-  If a generated answer fails source/number validation, the model may correct
-  it once; the same validation must pass before each claim is displayed.
-  Extractive mode retains keyword scope checks and skips AI classification.
-  The system prompt treats retrieved text as untrusted data and requires
-  evidence-backed claims. A narrowly scoped deterministic comparison flags the
-  known bilingual sum-insured-change table conflict. These controls reduce
-  failures; they do not prove semantic correctness.
+An editable diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 
-### Source-specific cautions
+## Key design decisions
 
-The brochure is general reference, **not the full policy contract**. PDF page 8
-quotes assumed rates as of **January 2022**; they should not be described as
-current rates today. The 2.5% condition concerns accumulated account value after
-at least 15 years in force, rather than a guaranteed annual credited rate.
+The reasoning, alternatives and tradeoffs are in
+[docs/design-decisions.md](docs/design-decisions.md). In brief:
 
-On **PDF page 17**, the Chinese minimum increase/decrease row states
-USD 5,000 / HKD 40,000 / MOP 400,000; its English counterpart states
-USD 5,000 / HKD 400,000 / MOP 40,000. The tutor reports the discrepancy and asks
-for insurer confirmation rather than guessing a correction. Detailed benefit
-claim document lists and processing times are absent: claims links in the
-brochure are not evidence for those details.
+- **Page-preserving chunks.** `pypdf` extracts each page and a recursive
+  splitter cuts it into 1,000-character chunks with 150 overlap. Chunks never
+  cross a page, so every citation carries an exact PDF file page.
+- **Local Chroma store.** One embedded store holds text, vectors and page
+  metadata without another service. The 20-page brochure yields 53 chunks.
+- **Hybrid retrieval with supporting pages.** Cosine similarity plus a small
+  keyword and Chinese-bigram score picks the top five chunks. The rest of the
+  pages holding the top three, plus the Notes and disclosure pages, are then
+  added, up to 17,000 characters, so footnotes travel with the benefits they
+  qualify.
+- **Server-owned citations.** The model returns statements and chunk IDs in a
+  strict JSON schema. The backend supplies the passages, page links and
+  numbering, and rejects unknown chunk IDs and any number that is absent from
+  the cited passages. One repair attempt is allowed; after that the user gets
+  an insufficient-evidence notice.
+- **Validated streaming.** The backend buffers the model's JSON and sends each
+  statement to the interface only after it passes those checks. The final full
+  response replaces the preview and is the only text saved.
+- **Layered guardrails.** Rules block common override and fabrication attempts.
+  A short model call then classifies intent: brochure questions go to
+  retrieval, personal advice and unrelated topics are refused, and unclear
+  input gets a clarifying question. Whether the brochure contains an answer is
+  decided after retrieval, not by the classifier.
+- **Conversation memory.** Each session keeps its history in local SQLite. The
+  last `MEMORY_TURNS` turns go to answer generation and short follow-ups reuse
+  recent questions for retrieval, but every fact must still cite freshly
+  retrieved passages.
 
-### Configuration
+## Source-specific cautions
+
+The brochure is general reference, **not the full policy contract**.
+
+- PDF page 8 quotes assumed rates as of **January 2022**; the tutor does not
+  present them as current or guaranteed.
+- The 2.5% condition concerns accumulated account value after at least 15
+  years in force, not a guaranteed annual credited rate.
+- On PDF page 17 the minimum increase/decrease in sum insured reads
+  USD 5,000 / HKD 40,000 / MOP 400,000 in Chinese and
+  USD 5,000 / HKD 400,000 / MOP 40,000 in English. The tutor reports the
+  discrepancy instead of choosing one.
+- The brochure has no claim document list or processing time, so the tutor
+  answers those questions with insufficient evidence.
+
+## Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -292,63 +188,43 @@ brochure are not evidence for those details.
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Character splitting settings |
 | `TOP_K` | `5` | Primary retrieval count (expanded context can include more) |
 | `MEMORY_TURNS` | `3` | Prior completed question/answer turns (1–10) |
-| `AUTO_INGEST` | `true` | Build/reuse index on startup |
-| `CHAT_MODE` | `llm` | `extractive` displays source passages without chat generation |
+| `AUTO_INGEST` | `true` | Build or reuse the index on startup |
+| `CHAT_MODE` | `llm` | `extractive` shows source passages without chat generation |
 
-OpenAI embeddings still call the API in `extractive` mode. If testing the
-optional Claude adapter, use `MODEL_PROVIDER=anthropic`, its native base URL and
-chat model, and `EMBEDDING_BACKEND=local` with
-`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. This requires a
-local embedding-model download/cache and a complete index rebuild; it is not
-the default tested submission configuration.
+An optional Claude
+adapter exists (`MODEL_PROVIDER=anthropic` with `EMBEDDING_BACKEND=local`, which
+downloads a local embedding model and needs a full index rebuild); it is not
+the tested configuration.
 
 ## Verification
 
 ```sh
 .venv/bin/pip install -r backend/requirements-dev.txt
 .venv/bin/python -m pytest backend/tests -q
-cd frontend && npm run build
-npm test
+(cd frontend && npm run build && npm test)
 ```
 
-With the backend running (uses the configured model API):
+With the backend running (this calls the configured model API):
 
 ```sh
-.venv/bin/python evals/run_eval.py
+.venv/bin/python evals/run_eval.py         # 28 end-to-end cases
+.venv/bin/python evals/retrieval_sweep.py  # chunk-setting comparison
 ```
 
-The evaluation set covers rates, charges/lapse, cooling-off, withdrawal and
-illness conditions, multi-turn follow-ups, three languages, missing evidence, bilingual
-conflicts and misuse. Reports under `evals/results/` are ignored. The automated
-checks are smoke checks of statuses, source pages and selected phrases; manually
-review source support and all conditions. See [evals/README.md](evals/README.md).
+The end-to-end cases cover rates, charges and lapse, cooling-off, withdrawals,
+illness conditions, follow-ups, three languages, missing evidence, the
+bilingual conflict and misuse. They check status, cited pages and selected
+phrases, not full factual correctness. See [evals/README.md](evals/README.md),
+[the retrieval results](evals/retrieval_results.md) and the
+[recorded checks](docs/verification.md).
 
-To compare chunk settings without replacing the active index, run
-`.venv/bin/python evals/retrieval_sweep.py`. It embeds each candidate split and
-scores page-level Precision@5, Recall@5, MRR and expanded-context coverage on
-nine annotated queries. See [the retrieval results](evals/retrieval_results.md)
-for the measured baseline and limits of this small evaluation.
+## Limits
 
-Recorded checks: [docs/verification.md](docs/verification.md).
-
-## Limits and troubleshooting
-
-- This demo supports digitally extractable PDFs, not scanned-document OCR.
-  PDF table extraction can lose layout or glyphs. Review source pages when
-  tables or translations conflict.
-- Citations use one-based PDF file pages, not printed pagination. `#page=N`
-  requests that page in the browser's PDF viewer; exact paragraph highlighting
-  is not implemented, and viewers may handle page fragments differently.
-- Retrieval still loads all chunk text and requests all distances for the small
-  brochure corpus. A large collection needs bounded Chroma candidates, stronger
-  reranking and targeted footnote links. `PersistentClient` is for this local
-  demo; shared production deployment should use a server-backed database.
-- AI intent classification, deterministic guards and grounded generation are not a general safety
-  verifier. Exact source IDs/quotes and numeric checks establish provenance,
-  not logical entailment. Broader adversarial testing remains necessary.
-- The interface displays setup/API errors without exposing credentials.
-  HTTP 401 usually means a rejected key; 429 may indicate quota/rate limits.
-  Configure the key and restart; use `/api/health` to check readiness.
-- The demo has no authentication, request rate limiting or session ownership
-  checks. Run it locally. Deployment requires those controls and a production
-  frontend server.
+- Text PDFs only; there is no OCR, and table extraction can lose layout.
+- Citations open the PDF at a page; paragraph highlighting is not implemented.
+- The evidence checks confirm that a cited passage exists and contains the
+  stated numbers. They do not prove that every paraphrase is correct.
+- Retrieval scores every chunk, which suits one brochure but not a large
+  collection.
+- There is no authentication, rate limiting or session ownership check, and
+  the frontend container runs the Vite development server. Run it locally.
