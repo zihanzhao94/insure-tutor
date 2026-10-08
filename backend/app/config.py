@@ -21,6 +21,7 @@ class Settings:
     chunk_size: int
     chunk_overlap: int
     top_k: int
+    memory_turns: int
     auto_ingest: bool
     chat_mode: str
 
@@ -37,8 +38,11 @@ def get_settings() -> Settings:
     size = int(os.getenv("CHUNK_SIZE", "1000"))
     overlap = int(os.getenv("CHUNK_OVERLAP", "150"))
     top_k = int(os.getenv("TOP_K", "5"))
+    memory_turns = int(os.getenv("MEMORY_TURNS", "3"))
     if size < 100 or not 0 <= overlap < size or not 1 <= top_k <= 12:
         raise ValueError("Invalid CHUNK_SIZE, CHUNK_OVERLAP, or TOP_K settings.")
+    if not 1 <= memory_turns <= 10:
+        raise ValueError("MEMORY_TURNS must be between 1 and 10.")
     mode = os.getenv("CHAT_MODE", "llm")
     if mode not in {"llm", "extractive"}:
         raise ValueError("CHAT_MODE must be llm or extractive.")
@@ -55,6 +59,6 @@ def get_settings() -> Settings:
         embedding_model=os.getenv("EMBEDDING_MODEL") or (
             "text-embedding-3-small" if backend == "openai" else
             "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"),
-        chunk_size=size, chunk_overlap=overlap, top_k=top_k,
+        chunk_size=size, chunk_overlap=overlap, top_k=top_k, memory_turns=memory_turns,
         auto_ingest=os.getenv("AUTO_INGEST", "true").lower() == "true", chat_mode=mode,
     )

@@ -15,8 +15,8 @@ def test_conversations_are_isolated_and_ordered(tmp_path):
 
 def test_followup_uses_previous_question(monkeypatch, tmp_path):
     received = []
-    def answer(question, language, index_dir):
-        received.append(question)
+    def answer(question, language, index_dir, **options):
+        received.append((question, options))
         return "A supported answer.", [], "answered"
     monkeypatch.setattr(chat, "answer_question", answer)
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
@@ -28,10 +28,84 @@ def test_followup_uses_previous_question(monkeypatch, tmp_path):
     first = chat.handle_chat(ChatRequest(message="What is the guaranteed insurance account value?"))
     second = chat.handle_chat(ChatRequest(message="And when does it apply?", session_id=first.session_id))
     assert first.session_id == second.session_id
-    assert "Previous question: What is the guaranteed insurance account value?" in received[1]
-    assert "Follow-up question: And when does it apply?" in received[1]
+    assert "What is the guaranteed insurance account value?" in received[1][0]
+    assert "Current question: And when does it apply?" in received[1][0]
+    assert received[1][1]["current_question"] == "And when does it apply?"
+    assert received[1][1]["conversation"] == classified[1]
     assert not classified[0]
     assert classified[1][0]["content"] == "What is the guaranteed insurance account value?"
+
+
+def test_memory_keeps_three_turns_and_excludes_old_answers_from_retrieval(monkeypatch):
+    monkeypatch.setenv("MEMORY_TURNS", "3")
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: "document_qa")
+    calls = []
+    def answer(question, language, index_dir, **options):
+        calls.append((question, options))
+        return "assistant answer", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    session_id = None
+    for prompt in ["Question about premiums?", "What about charges?", "And lapse?", "Then surrender?", "And cooling-off?"]:
+        result = chat.handle_chat(ChatRequest(message=prompt, session_id=session_id))
+        session_id = result.session_id
+    query, options = calls[-1]
+    assert "Question about premiums?" not in query
+    assert "What about charges?" in query
+    assert "assistant answer" not in query
+    assert [item["content"] for item in options["conversation"] if item["role"] == "user"] == [
+        "What about charges?", "And lapse?", "Then surrender?"]
+    assert options["current_question"] == "And cooling-off?"
+
+
+def test_brief_important_part_request_routes_to_overview_even_if_classifier_is_uncertain(monkeypatch):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: "uncertain")
+    seen = []
+    def answer(question, language, index_dir, **options):
+        seen.append((question, options))
+        return "A supported overview.", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    result = chat.handle_chat(ChatRequest(message="what is the most import part"))
+    assert result.status == "answered"
+    assert seen == [("what is the most import part", {"key_points": True})]
+
+
+def test_topic_reply_to_clarification_is_resolved_and_original_input_is_saved(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    classified = []
+    def classify(question, history):
+        classified.append(question)
+        return "uncertain"
+    monkeypatch.setattr(chat, "classify_question", classify)
+    seen = []
+    def answer(question, language, index_dir, **options):
+        seen.append((question, options))
+        return "Supported benefits.", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    first = chat.handle_chat(ChatRequest(message="Help me with this"))
+    second = chat.handle_chat(ChatRequest(message="benifit", session_id=first.session_id))
+    assert first.status == "clarification_required"
+    assert second.status == "answered" and second.session_id == first.session_id
+    assert classified == ["Help me with this"]
+    assert seen[0][0].startswith("Which types of benefits does the supplied brochure describe?")
+    assert seen[0][1]["current_question"] == seen[0][0]
+    assert [item["content"] for item in load_history(first.session_id, tmp_path) if item["role"] == "user"] == [
+        "Help me with this", "benifit"]
+
+
+def test_short_topic_standalone_is_a_document_question(monkeypatch):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    def forbidden(*a):
+        raise AssertionError("Known topic should not need intent classification")
+    monkeypatch.setattr(chat, "classify_question", forbidden)
+    seen = []
+    def answer(question, language, index_dir, **options):
+        seen.append(question)
+        return "Supported benefits.", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    assert chat.handle_chat(ChatRequest(message="benifit")).status == "answered"
+    assert seen[0].startswith("Which types of benefits does the supplied brochure describe?")
 
 
 def test_blocked_request_does_not_call_model(monkeypatch):

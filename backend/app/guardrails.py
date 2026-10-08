@@ -96,6 +96,8 @@ Examples:
 '这份文件有哪些比较重要的条款' -> document_overview
 '這份文件有哪些重要條款？' -> document_overview
 'What are the main policy terms?' -> document_overview
+'What is the most important part?' -> document_overview (the supplied brochure is implicit)
+'what is the most import part' -> document_overview (minor typo)
 'Is it guaranteed?' after an interest-rate question -> document_qa
 'What does the suicide exclusion mean?' -> document_qa
 'What claim documents are required?' -> document_qa
@@ -108,7 +110,11 @@ Examples:
 
 
 def classify_question(question: str, history: list[dict[str, str]]) -> QuestionCategory:
-    """Return a validated intent label; provider/format failures never allow unchecked RAG."""
+    """Choose a route for the latest question, using history only for references.
+
+    This classifier does not decide whether the brochure contains an answer;
+    retrieval and evidence validation make that decision later.
+    """
     context = [{"role": item["role"], "content": item["content"][:1200]}
                for item in history[-4:]]
     raw = generate_json([
@@ -136,7 +142,11 @@ def _numbers(text: str) -> set[str]:
 
 
 def validate_answer(answer: GeneratedAnswer, evidence: list[DocumentChunk]) -> None:
-    """Validate source IDs, quotations, and numeric support; this does not prove semantic correctness."""
+    """Reject claims lacking a retrieved source, exact quote, or cited numbers.
+
+    A claim here means an answer statement. The matching checks establish source
+    traceability, but cannot prove that its wording or inference is correct.
+    """
     sources = {chunk.chunk_id: chunk for chunk in evidence}
     if answer.status in {"answered", "conflict"} and not answer.claims:
         raise ValueError("An answered response must include supported claims.")
@@ -151,6 +161,7 @@ def validate_answer(answer: GeneratedAnswer, evidence: list[DocumentChunk]) -> N
             if len(ref.quote) < 12 or _canonical(ref.quote) not in _canonical(chunk.text):
                 raise ValueError("The answer contains an unverifiable citation or quote.")
             quotes.append(ref.quote)
+        # All numbers in the statement must appear in its own cited passages.
         supported = {number.replace(",", "") for number in _numbers(" ".join(quotes))}
         claimed = {number.replace(",", "") for number in _numbers(claim.text)}
         if not claimed <= supported:

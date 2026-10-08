@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Language = Literal["en", "zh-Hans", "zh-Hant"]
 QuestionCategory = Literal["document_qa", "document_overview", "personal_advice", "out_of_scope", "blocked", "uncertain"]
+MAX_CLAIMS = 6
 
 
 class QuestionIntent(BaseModel):
@@ -65,28 +66,34 @@ class ChatResponse(BaseModel):
 
 
 class EvidenceRef(BaseModel):
+    """Pointer to a retrieved PDF passage selected to support one answer statement."""
+
     chunk_id: str
     # The server supplies source text when the model selects only a chunk ID.
     quote: str = ""
 
 
 class GroundedClaim(BaseModel):
+    """One factual statement in the answer, not an insurance benefit claim (理赔)."""
+
     text: str = Field(min_length=1, max_length=1600)
     evidence: list[EvidenceRef] = Field(min_length=1, max_length=4)
 
     @field_validator("evidence", mode="before")
     @classmethod
     def accept_source_ids(cls, value):
-        # Both representations select the same server-owned source records.
         """Convert string source IDs into citation objects for consistent validation."""
+        # Both representations select the same server-owned source records.
         if isinstance(value, list):
             return [{"chunk_id": item} if isinstance(item, str) else item for item in value]
         return value
 
 
 class GeneratedAnswer(BaseModel):
+    """Model output: a status plus at most six evidence-backed answer statements."""
+
     status: Literal["answered", "insufficient_evidence", "conflict"]
-    claims: list[GroundedClaim] = Field(default_factory=list, max_length=8)
+    claims: list[GroundedClaim] = Field(default_factory=list, max_length=MAX_CLAIMS)
 
 
 # Constrain API output as well as validating it after generation. Quotes and
@@ -97,7 +104,7 @@ ANSWER_JSON_SCHEMA = {
     "properties": {
         "status": {"type": "string", "enum": ["answered", "insufficient_evidence", "conflict"]},
         "claims": {
-            "type": "array", "maxItems": 6,
+            "type": "array", "maxItems": MAX_CLAIMS,
             "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["text", "evidence"],

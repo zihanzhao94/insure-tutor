@@ -99,7 +99,11 @@ def generate_answer(messages: list[dict[str, str]]) -> str:
 
 
 def stream_answer(messages: list[dict[str, str]]):
-    """Yield OpenAI JSON text deltas; require a complete, normally finished stream."""
+    """Yield provider JSON fragments, not user-visible answer paragraphs.
+
+    RAG buffers these fragments into complete claims before displaying them;
+    this adapter also requires the provider's normal stop and DONE markers.
+    """
     settings = get_settings()
     if settings.model_provider != "openai":
         # The optional Claude path retains its existing buffered implementation.

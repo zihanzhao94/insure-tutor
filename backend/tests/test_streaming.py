@@ -335,9 +335,10 @@ def test_stream_chat_persists_only_the_canonical_result_and_reuses_session(monke
         "What insurance benefits are available?", "The final supported answer."]
     followup = list(chat.stream_chat(ChatRequest(message="And when does it apply?", session_id=session_id)))
     assert final_result(followup)["session_id"] == session_id
-    assert "Previous question: What insurance benefits are available?" in captured[1][0]
+    assert "What insurance benefits are available?" in captured[1][0]
+    assert captured[1][1]["current_question"] == "And when does it apply?"
     assert "Temporary preview" not in captured[1][0]
-    assert "The final supported answer." in captured[1][0]
+    assert captured[1][1]["conversation"][-1]["content"] == "The final supported answer."
 
 
 def test_abandoned_stream_does_not_persist_a_partial_turn(monkeypatch, tmp_path):

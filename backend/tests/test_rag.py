@@ -10,11 +10,22 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from app.config import ROOT
 from app.model_client import ModelError
 from app.rag import ingest, query
-from app.schemas import DocumentChunk, DocumentPage
+from app.schemas import ANSWER_JSON_SCHEMA, MAX_CLAIMS, DocumentChunk, DocumentPage, GeneratedAnswer
 
 def chunk(page=1, text="The minimum guaranteed account value applies after fifteen years.", number=1):
     return DocumentChunk(document_id="plan", filename="plan.pdf", pdf_page=page,
                          text=text, chunk_id=f"plan:p{page}:c{number}")
+
+
+def test_claim_limit_matches_schema_validation_and_stream_parser():
+    claims = [{"text": "A sourced statement.", "evidence": [{"chunk_id": "plan:p1:c1"}]}
+              for _ in range(MAX_CLAIMS + 1)]
+    assert ANSWER_JSON_SCHEMA["properties"]["claims"]["maxItems"] == MAX_CLAIMS
+    assert len(GeneratedAnswer.model_validate({"status": "answered", "claims": claims[:-1]}).claims) == MAX_CLAIMS
+    with pytest.raises(ValueError):
+        GeneratedAnswer.model_validate({"status": "answered", "claims": claims})
+    _, streamed = query._completed_claims(json.dumps({"status": "answered", "claims": claims}))
+    assert len(streamed) == MAX_CLAIMS
 
 def test_supplied_pdf_loads_all_pages_and_keeps_source_metadata():
     source = next((ROOT / "data/raw").glob("*.pdf"))
@@ -168,6 +179,78 @@ def test_answer_has_server_resolved_citations(monkeypatch, tmp_path):
     assert citations[0].excerpt == source.text
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_reference_numbers_identify_text_and_location_not_page_or_chunk(monkeypatch, tmp_path, streaming):
+    cooling = "The cooling-off period is 21 days, according to the brochure."
+    grace = "The grace period is 31 days, according to the brochure."
+    sources = [chunk(8, cooling), chunk(8, grace, 2),
+               chunk(8, cooling.replace(" ", "\n"), 3), chunk(9, cooling)]
+    monkeypatch.setattr(query, "retrieve", lambda *a: sources)
+    claims = [
+        {"text": "The cooling-off period is 21 days.", "evidence": [sources[0].chunk_id, sources[2].chunk_id]},
+        {"text": "The grace period is 31 days.", "evidence": [sources[1].chunk_id]},
+        {"text": "Cancellation has a 21-day cooling-off period.", "evidence": [sources[2].chunk_id]},
+        {"text": "Another page also describes the 21-day cooling-off period.", "evidence": [sources[3].chunk_id]},
+    ]
+    raw = json.dumps({"status": "answered", "claims": claims})
+    monkeypatch.setattr(query, "generate_answer", lambda *a: raw)
+    monkeypatch.setattr(query, "stream_answer", lambda *a: iter(raw))
+    if streaming:
+        events = list(query.stream_answer_question("insurance periods?", "en", tmp_path))
+        final = next(event["data"] for event in events if event["event"] == "result")
+        answer, citations = final["answer"], final["citations"]
+        assert "".join(event["data"]["text"] for event in events if event["event"] == "delta") == answer
+        assert [citation["pdf_page"] for citation in citations] == [8, 8, 9]
+    else:
+        answer, citations, _ = query.answer_question("insurance periods?", "en", tmp_path)
+        assert [citation.pdf_page for citation in citations] == [8, 8, 9]
+    assert len(citations) == 3
+    assert [line[-3:] for line in answer.split("\n\n")[:4]] == ["[1]", "[2]", "[1]", "[3]"]
+    assert "[1][1]" not in answer
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_different_passages_in_one_chunk_have_stable_separate_references(monkeypatch, tmp_path, streaming):
+    text = ("Other insurance information. " * 20
+            + "The cooling-off period is 21 calendar days from policy delivery. "
+            + "Additional information. " * 30
+            + "The grace period is 31 days before the policy lapses.")
+    source = chunk(15, text)
+    monkeypatch.setattr(query, "retrieve", lambda *a: [source])
+    claims = [{"text": explanation, "evidence": [source.chunk_id]} for explanation in (
+        "The cooling-off period is 21 calendar days from policy delivery.",
+        "The grace period is 31 days before the policy lapses.",
+        "The cooling-off period is 21 calendar days from policy delivery.")]
+    raw = json.dumps({"status": "answered", "claims": claims})
+    monkeypatch.setattr(query, "generate_answer", lambda *a: raw)
+    monkeypatch.setattr(query, "stream_answer", lambda *a: iter(raw))
+    if streaming:
+        events = list(query.stream_answer_question("insurance periods?", "en", tmp_path))
+        final = next(event["data"] for event in events if event["event"] == "result")
+        answer, excerpts = final["answer"], [citation["excerpt"] for citation in final["citations"]]
+        assert "".join(event["data"]["text"] for event in events if event["event"] == "delta") == answer
+        for event in events:
+            if event["event"] == "delta":
+                assert event["data"]["citations"] == final["citations"][:len(event["data"]["citations"])]
+    else:
+        answer, citations, _ = query.answer_question("insurance periods?", "en", tmp_path)
+        excerpts = [citation.excerpt for citation in citations]
+    assert len(excerpts) == 2 and excerpts[0] != excerpts[1]
+    assert "cooling-off period is 21" in excerpts[0]
+    assert "grace period is 31" in excerpts[1]
+    assert [line[-3:] for line in answer.split("\n\n")[:3]] == ["[1]", "[2]", "[1]"]
+    assert all(excerpt.strip("…") in text for excerpt in excerpts)
+
+
+def test_source_excerpt_keeps_original_chinese_and_whole_numeric_values():
+    text = "其他資料。" * 120 + "保單冷靜期為21個曆日，從交付保單或通知書的較早日期起計。"
+    excerpt = query._source_excerpt(text, "保单冷静期为21个历日。")
+    assert "保單冷靜期為21個曆日" in excerpt and excerpt.strip("…") in text
+    assert "保单" not in excerpt
+    excerpt = query._source_excerpt("文" * 395 + "48,000.25% " + "文" * 100, "Text", limit=400)
+    assert excerpt == "文" * 395 + "…"
+
+
 @pytest.mark.parametrize("ui_language,text", [
     ("en", "保單冷靜期為21天。"),
     ("zh-Hans", "保單冷靜期為21天。"),
@@ -196,7 +279,8 @@ def test_model_selects_answer_language_without_ui_locale_or_script_conversion(
         answer, _, _ = query.answer_question(question, ui_language, tmp_path)
     assert answer.startswith(text + " [1]")
     prompt = json.loads(captured[0][1]["content"])
-    assert set(prompt) == {"question", "passages"} and prompt["question"] == question
+    assert set(prompt) == {"question", "recent_conversation", "passages"} and prompt["question"] == question
+    assert prompt["recent_conversation"] == []
     assert "requested language (English" not in captured[0][0]["content"]
 
 
@@ -206,6 +290,35 @@ def test_malformed_or_empty_answer_fails_closed(monkeypatch, tmp_path, raw):
     monkeypatch.setattr(query, "generate_answer", lambda messages: raw)
     answer, citations, status = query.answer_question("insurance?", "en", tmp_path)
     assert status == "insufficient_evidence" and not citations
+
+
+def test_normal_question_repairs_one_invalid_number(monkeypatch, tmp_path):
+    source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
+    monkeypatch.setattr(query, "retrieve", lambda *a: [source])
+    calls = []
+    def generate(messages):
+        calls.append(len(messages))
+        days = 99 if len(calls) == 1 else 21
+        return json.dumps({"status": "answered", "claims": [{
+            "text": f"The cooling-off period is {days} days.",
+            "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("How long is cooling-off?", "en", tmp_path)
+    assert calls == [2, 4]
+    assert status == "answered" and "21 days" in answer and len(citations) == 1
+
+
+def test_answer_prompt_separates_recent_turns_from_current_evidence():
+    source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
+    conversation = [{"role": "user", "content": "What is the guarantee?"},
+                    {"role": "assistant", "content": "Old answer: 99 days."}]
+    messages = query._answer_messages("And cooling-off?", [source], False, conversation)
+    payload = json.loads(messages[1]["content"])
+    assert payload["question"] == "And cooling-off?"
+    assert payload["recent_conversation"] == conversation
+    assert payload["passages"][0]["text"] == source.text
+    assert "Old answer: 99 days." not in payload["passages"][0]["text"]
+    assert "Earlier assistant answers are not factual evidence" in messages[0]["content"]
 
 
 def test_overview_interleaves_topics_deduplicates_and_obeys_context_budget(monkeypatch, tmp_path):
@@ -239,6 +352,25 @@ def test_overview_answer_uses_topic_evidence_and_existing_validation(monkeypatch
     monkeypatch.setattr(query, "generate_answer", generate)
     answer, citations, status = query.answer_question("Summarize this document", "en", tmp_path, overview=True)
     assert status == "answered" and "21" in answer and citations[0].pdf_page == 1
+
+
+def test_key_points_uses_broad_evidence_with_a_short_answer_prompt(monkeypatch, tmp_path):
+    source = chunk(text="The brochure describes death benefits and supplementary benefits.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    def forbidden(*a, **kw):
+        raise AssertionError("Key points used single-topic retrieval")
+    monkeypatch.setattr(query, "retrieve", forbidden)
+    seen = []
+    def generate(messages):
+        seen.append(messages[0]["content"])
+        return json.dumps({"status": "answered", "claims": [{
+            "text": "The brochure describes death benefits and supplementary benefits.",
+            "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("What is most important?", "en", tmp_path, key_points=True)
+    assert status == "answered" and citations and "death benefits" in answer
+    assert "at most three short" in seen[0]
+    assert "one topic per claim" not in seen[0]
 
 
 @pytest.mark.parametrize("repair_succeeds", [True, False])

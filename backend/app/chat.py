@@ -24,7 +24,11 @@ def stream_chat(request: ChatRequest):
 
 
 def _chat_events(request, *, streaming):
-    """Share input routing, follow-up context, and persistence across both APIs."""
+    """Run the same conversation flow for JSON and SSE callers.
+
+    Load recent turns to understand follow-ups, route the question, retrieve fresh
+    PDF evidence, then save only the completed answer under this session ID.
+    """
     settings = get_settings()
     session_id = request.session_id or uuid.uuid4().hex
     question = request.message.strip()
@@ -32,14 +36,22 @@ def _chat_events(request, *, streaming):
         raise ValueError("Please enter a question.")
     yield {"event": "start", "data": {"session_id": session_id,
            "mode": settings.chat_mode}}
-    history = load_history(session_id, settings.data_dir)
+    history = load_history(session_id, settings.data_dir, limit=2 * settings.memory_turns)
     rejection = check_input(question, has_history=bool(history), rules_only=settings.chat_mode == "extractive")
     category = "document_qa"
+    resolved = _short_topic_request(question)
+    key_points = _is_brief_overview_request(question)
+    effective_question = resolved[0] if resolved else question
     if rejection is None and settings.chat_mode == "llm":
         # Check setup before spending tokens on classification.
         load_index(settings.data_dir / "index")
         yield {"event": "status", "data": {"phase": "classifying"}}
-        category = classify_question(question, history)
+        if resolved:
+            category = resolved[1]
+        else:
+            category = classify_question(question, history)
+            if category == "uncertain" and key_points:
+                category = "document_overview"
         rejection = {"personal_advice": "out_of_scope", "out_of_scope": "out_of_scope",
                      "blocked": "blocked", "uncertain": "clarification_required"}.get(category)
     if rejection:
@@ -50,17 +62,13 @@ def _chat_events(request, *, streaming):
                                 session_id=session_id, status=rejection, mode=settings.chat_mode)
         yield {"event": "result", "data": response.model_dump()}
         return
-    # A deterministic baseline for short/pronominal follow-ups, avoiding an
-    # extra model call. The limitation is documented and evaluated explicitly.
-    query = question
-    previous = next((m["content"] for m in reversed(history) if m["role"] == "user"), None)
-    if previous and (len(question) < 40 or re.search(r"\b(it|that|those|then)\b|那|它|这个|這個", question, re.I)):
-        earlier = [m["content"] for m in history if m["role"] == "user"][-3:-1]
-        previous_answer = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), "")
-        query = (f"Earlier questions: {'; '.join(earlier)}\nPrevious question: {previous}\n"
-                 f"Previous answer (context only, not new evidence): {previous_answer[:1200]}\n"
-                 f"Follow-up question: {question}")
-    options = {"overview": True} if category == "document_overview" else {}
+    # Search may include previous user topics; answer generation still receives the
+    # latest question separately so it does not answer an earlier turn again.
+    query = effective_question if resolved else _retrieval_query(question, history)
+    options = ({"key_points": True} if key_points else
+               {"overview": True} if category == "document_overview" else {})
+    if history:
+        options.update(current_question=effective_question, conversation=history)
     yield {"event": "status", "data": {"phase": "retrieving"}}
     if streaming:
         final = None
@@ -76,5 +84,54 @@ def _chat_events(request, *, streaming):
         answer, citations, status = answer_question(query, request.ui_language, settings.data_dir / "index", **options)
     response = ChatResponse(answer=answer, session_id=session_id,
                             citations=citations, status=status, mode=settings.chat_mode)
+    # Streaming previews are never conversation memory; only this final result is.
     save_turn(session_id, question, answer, settings.data_dir)
     yield {"event": "result", "data": response.model_dump()}
+
+
+def _retrieval_query(question: str, history: list[dict[str, str]]) -> str:
+    """Add recent user topics to a likely follow-up; old answers never become search evidence."""
+    previous = [item["content"] for item in history if item["role"] == "user"]
+    if not previous or not (len(question) < 40 or re.search(
+            r"\b(it|that|those|then|this|they|them|same|previous|above)\b|那|它|这个|這個|上述|刚才|剛才|前面|还有|還有",
+            question, re.I)):
+        return question
+    return "Recent questions: " + "; ".join(previous[-3:])[:600] + "\nCurrent question: " + question
+
+
+def _is_brief_overview_request(question: str) -> bool:
+    """Recognize a short request for key points, including a common typo."""
+    return bool(re.fullmatch(
+        r"(?:what(?:'s| is)|tell me)\s+(?:the\s+)?(?:most\s+import(?:ant)?|main|key)\s+"
+        r"(?:part|points?|terms?|features?)(?:\s+of\s+(?:this|the)\s+(?:brochure|document|plan))?[?.!]?",
+        question.strip(), re.I))
+
+
+def _short_topic_request(question: str) -> tuple[str, str] | None:
+    """Turn a one-word brochure topic, including a common typo, into a complete question."""
+    topic = re.sub(r"[\s?.!。？！，,]+", "", question).casefold()
+    benefit_question = ("Which types of benefits does the supplied brochure describe? "
+                        "Give a brief high-level list of benefit categories; omit rates, amounts and detailed conditions.")
+    english = {
+        "benefit": benefit_question,
+        "benefits": benefit_question,
+        "benifit": benefit_question,
+        "benifits": benefit_question,
+        "premium": "How do premiums work in the supplied insurance plan?",
+        "premiums": "How do premiums work in the supplied insurance plan?",
+        "charge": "What charges apply to the supplied insurance plan?",
+        "charges": "What charges apply to the supplied insurance plan?",
+        "summary": "Summarize the main terms of the supplied brochure.",
+    }
+    chinese = {
+        "保障": "请简要列出这份保险宣传册的保障类别，不展开利率、金额或详细条件。",
+        "保费": "这份保险宣传册的保费规则是什么？",
+        "費用": "这份保险宣传册有哪些费用？",
+        "费用": "这份保险宣传册有哪些费用？",
+        "总结": "总结这份保险宣传册的主要条款。",
+        "總結": "总结这份保险宣传册的主要条款。",
+    }
+    resolved = english.get(topic) or chinese.get(topic)
+    if resolved:
+        return resolved, "document_overview" if topic in {"summary", "总结", "總結"} else "document_qa"
+    return None

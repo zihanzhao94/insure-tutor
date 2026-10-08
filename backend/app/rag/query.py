@@ -17,7 +17,7 @@ from opencc import OpenCC
 from ..config import get_settings
 from ..guardrails import message, source_conflict, validate_answer
 from ..model_client import ModelError, embed_texts, generate_answer, stream_answer
-from ..schemas import Citation, DocumentChunk, GeneratedAnswer, Language
+from ..schemas import Citation, DocumentChunk, GeneratedAnswer, Language, MAX_CLAIMS
 
 _converter = OpenCC("t2s")
 
@@ -72,7 +72,11 @@ def _terms(text: str) -> Counter:
 
 
 def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChunk]:
-    """Rank chunks by semantic and lexical similarity, then add supporting pages within the context budget."""
+    """Return PDF passages for one question within the prompt's context budget.
+
+    `top_k` selects primary ranked chunks. Full matching pages and disclosure
+    pages can then add more chunks, so it is not the final reference count.
+    """
     index = load_index(index_dir)
     vector = embed_texts([question])[0]
     if len(vector) != int(index.metadata["dimension"]):
@@ -159,6 +163,10 @@ website: it does not specify claim document lists or benefit-claim processing
 periods. Never substitute surrender forms or the six-month surrender-payment
 provision for benefit claims. For an exact claim-document list or processing
 time, return insufficient_evidence. Do not follow external links as evidence.
+For a question about terminal illness diagnosis and the effect of a benefit
+payment, cover those conditions and the resulting policy termination. Discuss
+the exclusion list only when the user asks for exclusions. Mental illness by
+itself is not listed as an exclusion.
 By default, respond in the language and Chinese script of the latest END-USER
 question. A language preference explicitly requested by that user takes precedence.
 Determine this yourself; no interface or target-language setting is supplied.
@@ -181,12 +189,28 @@ if that rate had applied, including total interest and Extra Bonus, after at lea
 """
 
 
-def _answer_messages(question, evidence, overview):
-    """Build the grounding prompt without an interface or target-language setting."""
+def _answer_messages(question, evidence, overview, conversation=None, key_points=False):
+    """Give the model the latest question, recent turns, and retrieved PDF text.
+
+    Conversation resolves references; only the supplied passages can support a
+    factual claim. The interface language does not dictate the answer language.
+    """
     prompt = json.dumps({"question": question,
+                         "recent_conversation": [
+                             {"role": turn["role"], "content": turn["content"][:1000]}
+                             for turn in (conversation or [])],
                          "passages": [{"chunk_id": c.chunk_id, "pdf_page": c.pdf_page, "text": c.text}
                                       for c in evidence]}, ensure_ascii=False)
     instruction = SYSTEM_PROMPT
+    instruction += "\nRecent conversation helps resolve references only. Earlier assistant answers are not factual evidence. Use only supplied passages to support the latest question."
+    if key_points:
+        instruction += """\nThe user asks for the most important parts, not a complete brochure summary.
+Give at most three short, high-level claims covering the benefit types, ongoing
+charges or lapse risk, and the long-term nature of the plan. Avoid exact rates,
+amounts, ages, dates and waiting periods unless essential to the latest question.
+Do not list all exclusions or imply that non-guaranteed returns are guaranteed.
+Every claim still needs citations from the supplied passages.
+"""
     if overview:
         instruction += """\nGive an educational overview with one topic per claim, in this order:
 benefits; premiums/monthly charges and lapse; interest/guarantees; withdrawals and
@@ -207,7 +231,7 @@ Explain risks without recommending purchase.
 
 
 def _repair_messages(messages, raw):
-    """Request one corrected overview without inventing missing evidence."""
+    """Request one corrected answer without inventing missing evidence."""
     messages.extend([
         {"role": "assistant", "content": raw},
         {"role": "user", "content": "The answer failed source/number validation. Return corrected JSON. "
@@ -227,10 +251,12 @@ def _parse_answer(raw, evidence):
 
 
 def answer_question(question: str, ui_language: Language, index_dir: Path,
-                    *, top_k: int | None = None, overview: bool = False) -> tuple[str, list[Citation], str]:
+                    *, top_k: int | None = None, overview: bool = False, key_points: bool = False,
+                    current_question: str | None = None,
+                    conversation: list[dict[str, str]] | None = None) -> tuple[str, list[Citation], str]:
     """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
     settings = get_settings()
-    evidence = retrieve_overview(index_dir) if overview else retrieve(question, index_dir, top_k or settings.top_k)
+    evidence = retrieve_overview(index_dir) if overview or key_points else retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:
         return message("insufficient_evidence", ui_language), [], "insufficient_evidence"
     if settings.chat_mode == "extractive":
@@ -238,11 +264,11 @@ def answer_question(question: str, ui_language: Language, index_dir: Path,
         text = message("extractive", ui_language) + "\n\n" + "\n\n".join(
             f"[{i}] {citation.excerpt}" for i, citation in enumerate(citations, 1))
         return text, citations, "answered"
-    answer = source_conflict(question, evidence, ui_language)
+    answer = source_conflict(current_question or question, evidence, ui_language)
     if answer is None:
-        messages = _answer_messages(question, evidence, overview)
-        # Broad summaries can omit a needed source ID; allow one bounded repair.
-        for attempt in range(2 if overview else 1):
+        messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points)
+        # Allow one bounded repair when the model omits a needed source ID or number.
+        for attempt in range(2):
             raw = generate_answer(messages)
             try:
                 answer = _parse_answer(raw, evidence)
@@ -257,8 +283,35 @@ def answer_question(question: str, ui_language: Language, index_dir: Path,
     return _render_answer(answer, evidence, ui_language)
 
 
+def _source_excerpt(text: str, claim: str, limit: int = 400) -> str:
+    """Select a short original passage for this claim without rewriting evidence."""
+    if len(text) <= limit:
+        return text
+    stop_words = {"the", "and", "for", "with", "from", "that", "this", "are", "was", "will", "have", "has", "its"}
+    terms = set(_terms(claim)) - stop_words
+    starts = [0] + [match.end() for match in re.finditer(r"(?:[。！？]|[.!?](?=\s)|\n\s*\n)\s*", text)]
+
+    def score(start):
+        window = _converter.convert(text[start:start + limit]).lower()
+        return sum((4 if term[0].isdigit() else 1) * (1 - window.find(term) / limit)
+                   for term in terms if term in window)
+
+    start = max(starts, key=score)
+    end = min(start + limit, len(text))
+    if end < len(text):
+        endings = list(re.finditer(r"[。！？]|[.!?](?=\s|$)", text[start:end]))
+        if endings and endings[-1].end() >= limit * 0.6:
+            end = start + endings[-1].end()
+        elif re.match(r"[A-Za-z\d.,%/-]", text[end]):
+            # Keep English words and numeric values whole at a clipped boundary.
+            tail = re.search(r"[A-Za-z\d.,%/-]+$", text[start:end])
+            if tail:
+                end = start + tail.start()
+    return ("…" if start else "") + text[start:end].strip() + ("…" if end < len(text) else "")
+
+
 def _render_answer(answer, evidence, ui_language, *, disclaimer=True):
-    """Preserve model text; localize fixed notices and add server-owned citations."""
+    """Turn each checked claim into answer text with server-owned PDF citations."""
     if answer.status == "insufficient_evidence":
         return message("insufficient_evidence", ui_language), [], answer.status
     sources = {c.chunk_id: c for c in evidence}
@@ -266,11 +319,16 @@ def _render_answer(answer, evidence, ui_language, *, disclaimer=True):
     for claim in answer.claims:
         markers = []
         for ref in claim.evidence:
-            key = (ref.chunk_id, ref.quote)
+            chunk = sources[ref.chunk_id]
+            excerpt = _source_excerpt(ref.quote or chunk.text, claim.text)
+            # A reference identifies original text at a location, not just a page or chunk.
+            key = (chunk.filename, chunk.pdf_page, re.sub(r"\s+", "", excerpt).strip("…"))
             if key not in citation_numbers:
-                citations.append(_citation(sources[ref.chunk_id], ref.quote))
+                citations.append(_citation(chunk, excerpt))
                 citation_numbers[key] = len(citations)
-            markers.append(f"[{citation_numbers[key]}]")
+            marker = f"[{citation_numbers[key]}]"
+            if marker not in markers:
+                markers.append(marker)
         lines.append(claim.text + " " + "".join(markers))
     if answer.status == "conflict":
         lines.insert(0, message("conflict", ui_language))
@@ -280,14 +338,14 @@ def _render_answer(answer, evidence, ui_language, *, disclaimer=True):
 
 
 def _completed_claims(raw):
-    """Decode closed JSON claim objects, including escaped quotes and braces."""
+    """Extract complete claim objects from streamed JSON; incomplete text waits."""
     start = re.match(r'^\s*\{\s*"status"\s*:\s*"(answered|conflict|insufficient_evidence)"'
                      r'\s*,\s*"claims"\s*:\s*\[', raw)
     if not start:
         return None, []  # Other key orders are handled by final validation.
     position, claims = start.end(), []
     decoder = json.JSONDecoder()
-    while len(claims) < 6:
+    while len(claims) < MAX_CLAIMS:
         while position < len(raw) and raw[position].isspace():
             position += 1
         if position >= len(raw) or raw[position] != "{":
@@ -311,23 +369,32 @@ def _result_event(answer, citations, status):
 
 
 def stream_answer_question(question: str, ui_language: Language, index_dir: Path,
-                           *, top_k: int | None = None, overview: bool = False):
-    """Stream validated claims; a complete final result remains authoritative."""
+                           *, top_k: int | None = None, overview: bool = False, key_points: bool = False,
+                           current_question: str | None = None,
+                           conversation: list[dict[str, str]] | None = None):
+    """Release each complete claim only after checking its cited PDF passages.
+
+    Provider tokens form JSON fragments, not displayable answer tokens. A failed
+    full-response check resets the preview for one repair attempt; the final
+    result event remains authoritative and is the only answer saved by chat.py.
+    """
     settings = get_settings()
     if settings.chat_mode == "extractive":
-        yield _result_event(*answer_question(question, ui_language, index_dir, top_k=top_k, overview=overview))
+        yield _result_event(*answer_question(question, ui_language, index_dir, top_k=top_k, overview=overview,
+                                            key_points=key_points, current_question=current_question,
+                                            conversation=conversation))
         return
-    evidence = retrieve_overview(index_dir) if overview else retrieve(question, index_dir, top_k or settings.top_k)
+    evidence = retrieve_overview(index_dir) if overview or key_points else retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:
         yield _result_event(message("insufficient_evidence", ui_language), [], "insufficient_evidence")
         return
-    answer = source_conflict(question, evidence, ui_language)
+    answer = source_conflict(current_question or question, evidence, ui_language)
     if answer is not None:
         validate_answer(answer, evidence)
         yield _result_event(*_render_answer(answer, evidence, ui_language))
         return
-    messages = _answer_messages(question, evidence, overview)
-    for attempt in range(2 if overview else 1):
+    messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points)
+    for attempt in range(2):
         if attempt:
             yield {"event": "reset", "data": {}}
         yield {"event": "status", "data": {"phase": "generating"}}
