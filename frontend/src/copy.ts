@@ -1,7 +1,7 @@
 import type { Language } from "./types";
 const en = {
   sourceLibrary: "SOURCE LIBRARY", documentType: "PDF document", noDocuments: "No indexed documents yet.",
-  subtitle: "Your guide to the fine print", language: "Interface language", newChat: "New conversation",
+  subtitle: "Your guide to the fine print", language: "Language", newChat: "New conversation",
   eyebrow: "DOCUMENT-GROUNDED INSURANCE TUTOR", title: "Understand your cover.",
   introduction: "Ask about the insurance documents in the source library. Explore benefits, conditions and charges, with references to the original PDF.",
   question: "Your question", placeholder: "Ask about benefits, premiums or policy conditions…",
@@ -20,7 +20,7 @@ const en = {
 };
 const hans: typeof en = {
   sourceLibrary: "来源文档", documentType: "PDF 文档", noDocuments: "暂无已建立索引的文档。",
-  subtitle: "读懂保险条款", language: "界面语言", newChat: "新对话",
+  subtitle: "读懂保险条款", language: "语言", newChat: "新对话",
   eyebrow: "基于文档的保险问答", title: "了解保障，读懂细节。",
   introduction: "询问来源文档中的保险保障、条件和费用，查看回答对应的 PDF 原文。",
   question: "你的问题", placeholder: "询问保障、保费或保单条件……",
@@ -38,7 +38,7 @@ const hans: typeof en = {
   statuses: { answered: "附有原文依据", insufficient_evidence: "证据不足", out_of_scope: "超出范围", blocked: "请求已拒绝", conflict: "来源存在差异", clarification_required: "请补充说明" },
 };
 const hant: typeof en = {
-  ...hans, sourceLibrary: "來源文檔", documentType: "PDF 文檔", noDocuments: "暫無已建立索引的文檔。", subtitle: "讀懂保險條款", language: "介面語言", newChat: "新對話",
+  ...hans, sourceLibrary: "來源文檔", documentType: "PDF 文檔", noDocuments: "暫無已建立索引的文檔。", subtitle: "讀懂保險條款", language: "語言", newChat: "新對話",
   eyebrow: "基於文檔的保險問答", title: "了解保障，讀懂細節。",
   introduction: "詢問來源文檔中的保險保障、條件和費用，查看回答對應的 PDF 原文。",
   question: "你的問題", placeholder: "詢問保障、保費或保單條件……",

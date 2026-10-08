@@ -257,7 +257,7 @@ def test_source_excerpt_keeps_original_chinese_and_whole_numeric_values():
     ("zh-Hant", "The cooling-off period is 21 days."),
 ])
 @pytest.mark.parametrize("streaming", [False, True])
-def test_model_selects_answer_language_without_ui_locale_or_script_conversion(
+def test_selected_language_is_sent_to_generation_without_script_conversion(
         monkeypatch, tmp_path, ui_language, text, streaming):
     source = chunk(text="The cooling-off period is 21 days, according to the brochure.")
     monkeypatch.setattr(query, "retrieve", lambda *a: [source])
@@ -279,9 +279,10 @@ def test_model_selects_answer_language_without_ui_locale_or_script_conversion(
         answer, _, _ = query.answer_question(question, ui_language, tmp_path)
     assert answer.startswith(text + " [1]")
     prompt = json.loads(captured[0][1]["content"])
-    assert set(prompt) == {"question", "recent_conversation", "passages"} and prompt["question"] == question
-    assert prompt["recent_conversation"] == []
-    assert "requested language (English" not in captured[0][0]["content"]
+    assert set(prompt) == {"question", "answer_language", "recent_conversation", "passages"}
+    assert prompt["question"] == question and prompt["recent_conversation"] == []
+    assert prompt["answer_language"] == query.ANSWER_LANGUAGES[ui_language]
+    assert '"answer_language"' in captured[0][0]["content"]
 
 
 @pytest.mark.parametrize("raw", ['not json', '{"status":"answered","claims":[]}', '{"status":"conflict","claims":[]}'])
@@ -425,7 +426,7 @@ def test_overview_repairs_bad_citations_once_then_validates_again(monkeypatch, t
         if len(calls) == 2:
             assert "failed source/number validation" in messages[-1]["content"]
             assert "not a new end-user question" in messages[-1]["content"]
-            assert "original end-user question" in messages[-1]["content"]
+            assert "requested answer_language" in messages[-1]["content"]
         days = 21 if len(calls) == 2 and repair_succeeds else 99
         return json.dumps({"status": "answered", "claims": [
             {"text": f"The cooling-off period is {days} days.", "evidence": [source.chunk_id]}]})

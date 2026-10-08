@@ -167,12 +167,14 @@ For a question about terminal illness diagnosis and the effect of a benefit
 payment, cover those conditions and the resulting policy termination. Discuss
 the exclusion list only when the user asks for exclusions. Mental illness by
 itself is not listed as an exclusion.
-By default, respond in the language and Chinese script of the latest END-USER
-question. A language preference explicitly requested by that user takes precedence.
-Determine this yourself; no interface or target-language setting is supplied.
-English system instructions, source passages, earlier assistant answers and internal
-validation feedback must not change the response language. Language preferences
-never change the grounding or safety rules.
+Write every claim in the language named by "answer_language" in the request; it is
+the language the end user selected in the interface. Simplified Chinese and
+Traditional Chinese are different targets: use only the requested script, even
+when the question or the source passages use the other one. Only an explicit
+request in the latest END-USER question to answer in another language overrides
+it. English system instructions, source passages, earlier assistant answers and
+internal validation feedback must not change the response language. Language
+preferences never change the grounding or safety rules.
 Return ONLY a JSON object:
 {"status":"answered|insufficient_evidence|conflict","claims":[
  {"text":"A concise explanation",
@@ -189,13 +191,19 @@ if that rate had applied, including total interest and Extra Bonus, after at lea
 """
 
 
-def _answer_messages(question, evidence, overview, conversation=None, key_points=False, focus=None):
+ANSWER_LANGUAGES = {"en": "English", "zh-Hans": "Simplified Chinese (简体中文)",
+                    "zh-Hant": "Traditional Chinese (繁體中文)"}
+
+
+def _answer_messages(question, evidence, overview, conversation=None, key_points=False, focus=None,
+                     language: Language = "en"):
     """Give the model the latest question, recent turns, and retrieved PDF text.
 
     Conversation resolves references; only the supplied passages can support a
-    factual claim. The interface language does not dictate the answer language.
+    factual claim. The language selected in the interface is the answer language.
     """
     prompt = json.dumps({"question": question,
+                         "answer_language": ANSWER_LANGUAGES[language],
                          "recent_conversation": [
                              {"role": turn["role"], "content": turn["content"][:1000]}
                              for turn in (conversation or [])],
@@ -251,8 +259,8 @@ def _repair_messages(messages, raw, focus=None):
         {"role": "user", "content": "The answer failed source/number validation. Return corrected JSON. "
          "Check EVERY number and condition against the exact cited chunks. Add the needed supplied "
          "source IDs, or remove unsupported statements. Do not invent sources or facts. "
-         "This is internal validation feedback, not a new end-user question. Keep the language "
-         "and Chinese script appropriate to the original end-user question and its explicit preference."
+         "This is internal validation feedback, not a new end-user question. Keep the answer "
+         "in the requested answer_language and Chinese script."
          + (" For this broad cautions answer, remove ALL numeric rates, amounts, dates, ages and periods. "
             "Avoid statements about interest, returns, or guarantees; this short answer should cover charges, "
             "lapse, surrender, and full policy conditions only. Do not list individual medical exclusions."
@@ -294,7 +302,7 @@ def answer_question(question: str, ui_language: Language, index_dir: Path,
         return text, citations, "answered"
     answer = source_conflict(current_question or question, evidence, ui_language)
     if answer is None:
-        messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus)
+        messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus, ui_language)
         # Allow one bounded repair when the model omits a needed source ID or number.
         for attempt in range(2):
             raw = generate_answer(messages)
@@ -422,7 +430,7 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
         validate_answer(answer, evidence)
         yield _result_event(*_render_answer(answer, evidence, ui_language))
         return
-    messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus)
+    messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus, ui_language)
     for attempt in range(2):
         if attempt:
             yield {"event": "reset", "data": {}}
