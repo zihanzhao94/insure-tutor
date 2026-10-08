@@ -4,10 +4,14 @@ A bilingual insurance tutor for the supplied **FLEXI-ULife Prime Saver** brochur
 Ask questions in English, Simplified Chinese, or Traditional Chinese; follow up
 in the same conversation; click inline citations to preview the original evidence.
 Built with React/TypeScript, FastAPI, GPT and OpenAI embeddings. Answers appear
-as validated paragraphs arrive, with compact reference links beside each claim.
+as validated paragraphs arrive and unfold progressively, with compact reference
+links beside each claim.
 Click a reference to open a dialog with its filename, PDF file page, a short
-original excerpt and a **View PDF** link to that page. The preview favors source
-sentences sharing the cited claim's terms and numbers. The display joins wrapped
+original excerpt and a **View PDF** link to that page. The server selects a stable
+original passage for each reference using shared claim terms and numbers. Within
+an answer, the same source text at the same file/page reuses a number; different
+passages on one page get different numbers. Every occurrence of a number shows
+the same snippet. The display joins wrapped
 lines and spaced Chinese characters, while preserving English words and policy
 figures. Numeric rows retain their line breaks. Long excerpts are shortened with
 an ellipsis; the PDF retains the original
@@ -136,6 +140,22 @@ The [assignment](docs/TakeHomeTask-InsureTutor.md) describes the original requir
 The [design and technology decisions](docs/design-decisions.md) explain the
 architecture, selection rationale, RAG parameters and implementation tradeoffs.
 
+### What “claim” means in this code
+
+A `GroundedClaim` is **one statement in the tutor's answer**, not a customer's
+insurance claim (理赔申请). For example, an answer might contain the statement
+“The cooling-off period is 21 days” with one `evidence` entry naming the
+retrieved PDF chunk that supports it. The model proposes the wording and chunk
+ID; the backend looks up that chunk, checks the citation and numbers, then
+renders the statement with a numbered PDF reference. Another statement about
+when the period begins would be a separate claim and might need a different
+source. A chunk is source material; a claim is answer text. One claim can cite
+up to four chunks, and one generated answer can contain up to six claims.
+
+These checks establish that the cited passage exists and contains the claimed
+numbers. They do not establish that every paraphrase or inference is correct,
+so insurance conditions and exclusions still need human review.
+
 ```text
 backend/app/
 ├── main.py          API endpoints, PDF serving and startup indexing
@@ -203,13 +223,20 @@ evals/               Source-grounded API smoke cases and runner
   JSON text; the backend buffers each complete claim and checks its sources and
   numbers before sending a paragraph and its citations. It never exposes partial
   JSON or an unchecked claim. The final full response replaces provisional text,
-  and only that response is saved. A failed overview repair clears its preview;
-  provider errors remove the incomplete turn. This is paragraph streaming rather
-  than character-by-character output. `POST /api/chat` remains available as JSON
+  and only that response is saved. One bounded source/number repair is available
+  after validation fails; a failed repair clears its preview;
+  provider errors remove the incomplete turn. The frontend progressively reveals
+  validated text using animation frames, including queued text after the final
+  response arrives. Citation markers appear atomically. A rejection or reset
+  immediately replaces the preview and clears queued text; Stop also cancels
+  playback. Reduced-motion users receive immediate updates. The server still
+  validates complete claims before display. `POST /api/chat` remains available as JSON
   for evaluation and other clients. The optional Claude adapter remains buffered.
 - **Conversation context.** Random session IDs isolate local SQLite histories.
-  Short/pronominal follow-ups include recent questions and the previous answer
-  as context, while factual support must still come from fresh retrieval. New
+  The latest three completed question/answer turns are supplied to intent routing
+  and answer generation. Likely follow-ups add recent user questions to retrieval;
+  earlier assistant answers are context only, while factual support must still
+  come from fresh retrieval and citations. Set `MEMORY_TURNS` to adjust the window. New
   conversation clears the UI session. Refreshing starts a new conversation;
   this demo has no user accounts or conversation browser.
 - **Layered guardrails.** Rules block common override/secret/fabrication attempts.
@@ -223,7 +250,7 @@ evals/               Source-grounded API smoke cases and runner
   topics (benefits, premiums/charges, cancellation, interest and exclusions).
   They interleave/deduplicate sources and keep the same
   17,000-character budget. This adds five query embeddings rather than one.
-  If a generated overview fails source/number validation, the model may correct
+  If a generated answer fails source/number validation, the model may correct
   it once; the same validation must pass before each claim is displayed.
   Extractive mode retains keyword scope checks and skips AI classification.
   The system prompt treats retrieved text as untrusted data and requires
@@ -257,6 +284,7 @@ brochure are not evidence for those details.
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Same model for documents and queries |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Character splitting settings |
 | `TOP_K` | `5` | Primary retrieval count (expanded context can include more) |
+| `MEMORY_TURNS` | `3` | Prior completed question/answer turns (1–10) |
 | `AUTO_INGEST` | `true` | Build/reuse index on startup |
 | `CHAT_MODE` | `llm` | `extractive` displays source passages without chat generation |
 
@@ -283,10 +311,16 @@ With the backend running (uses the configured model API):
 ```
 
 The evaluation set covers rates, charges/lapse, cooling-off, withdrawal and
-illness conditions, follow-ups, three languages, missing evidence, bilingual
+illness conditions, multi-turn follow-ups, three languages, missing evidence, bilingual
 conflicts and misuse. Reports under `evals/results/` are ignored. The automated
 checks are smoke checks of statuses, source pages and selected phrases; manually
 review source support and all conditions. See [evals/README.md](evals/README.md).
+
+To compare chunk settings without replacing the active index, run
+`.venv/bin/python evals/retrieval_sweep.py`. It embeds each candidate split and
+scores page-level Precision@5, Recall@5, MRR and expanded-context coverage on
+nine annotated queries. See [the retrieval results](evals/retrieval_results.md)
+for the measured baseline and limits of this small evaluation.
 
 Recorded checks: [docs/verification.md](docs/verification.md).
 

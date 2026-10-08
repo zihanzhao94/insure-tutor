@@ -1,5 +1,67 @@
 # Verification record
 
+## Assignment checklist review (2026-10-08)
+
+Compared the repository with [the take-home task](TakeHomeTask-InsureTutor.md).
+The chat, document-grounded answers with PDF references, scope controls,
+English/Chinese interface, Docker startup, `.env.example`, and README run and
+architecture instructions are present. `docker compose config --quiet` passed;
+the running backend was healthy with one indexed PDF and 53 chunks; the frontend
+returned HTTP 200. `.env` and local evaluation results are ignored by Git.
+The latest checks passed 105 backend tests, 17 frontend tests, and the frontend
+TypeScript/Vite build.
+
+The remaining quality risk is semantic: source-ID, quote, and number checks cannot establish
+that every insurance condition is paraphrased correctly. Manually review
+representative answers against the PDF, especially exclusions, waiting periods,
+financial guarantees and bilingual discrepancies. Chinese script choice is a
+model instruction rather than a deterministic guarantee; Simplified/Traditional
+output is a bonus in the assignment.
+
+## Short follow-up and SSE regression (2026-10-08)
+
+- Reproduced the screenshot's two-turn sequence on the old backend:
+  `what is the most import part` and `benifit` both returned
+  `clarification_required` despite sharing a session ID.
+- The backend now treats the first wording as a request for concise key points
+  and resolves one-word brochure topics, including `benifit`, to complete
+  questions. The original user wording remains in SQLite history.
+- The two new live API cases passed **2/2** on the rebuilt Docker backend.
+  Repeating the same sequence through `/api/chat/stream` returned `answered`
+  for both turns, with 4 and 6 validated `delta` events respectively.
+- The backend unit suite passed **104 tests** after this change. The local
+  report is `evals/results/20261008T022403Z.json` (ignored by Git).
+
+## Multi-turn memory and retrieval evaluation (2026-10-07)
+
+- The backend now supplies the latest three completed turns to intent routing
+  and answer generation. A three-turn question about the 2.5% account-value
+  guarantee answered correctly with citations to PDF pages 8 and 16. Recent
+  assistant answers remain context only; fresh passages support claims.
+- Six chunk-size/overlap settings were re-embedded and compared on nine
+  page-labeled questions. All had page Recall@5 of 1.000. The current
+  1000/150 setting had page Precision@5 of 0.541 and MRR of 1.000; the
+  1400/210 setting had Precision@5 of 0.500 and MRR of 0.889. See
+  [the retrieval comparison](../evals/retrieval_results.md). These are
+  small, coarse page-level measurements, not a semantic answer score.
+- **100 backend tests passed.** The frontend's 17 tests and production build
+  passed; the frontend changes visible in the working tree predated this task.
+- The Docker backend was rebuilt and restarted from the updated source. Its
+  `/api/health` endpoint reported an index-ready 53-chunk collection, and the
+  running container reported `MEMORY_TURNS=3`.
+- A current-source live API subset on port 8001 initially passed **10/11**
+  smoke checks. The terminal-illness case returned insufficient evidence even
+  though retrieval found pages 11, 12 and 14. After adding one bounded
+  source/number repair attempt and tightening its prompt, that case and the
+  three-turn memory case passed **2/2** on the updated server. Reports are
+  local and ignored by Git: `20261007T140018Z.json` and
+  `20261007T140246Z.json` under `evals/results/`.
+- Manual review of the successful terminal-illness response found an
+  unnecessary exclusion list. Although its cited pages contain the listed
+  terms, source and numeric checks do not establish that every paraphrase or
+  implication is correct. This remains a semantic-review item, especially for
+  mental-state wording; the smoke check does not certify it.
+
 Checked on 2026-10-07 after migrating to local Chroma and cleaning printed
 page-number footers, with the default
 GPT + OpenAI Embedding configuration.

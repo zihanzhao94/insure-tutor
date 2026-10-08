@@ -157,8 +157,10 @@ cleanup is not a general header/footer or relevance classifier.
 | Lexical weight | 0.12 | Adds English terms, numbers and Chinese bigram matches to semantic ranking |
 | Context budget | 17,000 characters | Limits expanded source text sent to the chat model; it is not a token limit |
 
-These values are initial defaults checked against the supplied brochure, not
-optimized results. The current score is:
+These values were compared across six chunk configurations on nine page-labeled
+queries. The current `1000/150` configuration tied for best MRR and had the
+highest page-level precision in that small set; it is not a general optimum.
+See [the retrieval evaluation](../evals/retrieval_results.md). The current score is:
 
 ```text
 semantic similarity = 1 - Chroma cosine distance
@@ -226,15 +228,21 @@ PDF file page, original snippet and a **View PDF** link to
 `/api/documents/<filename>#page=N`. The dialog supports keyboard focus trapping,
 Escape, a close button and backdrop dismissal.
 
-The server uses a validated exact quote when supplied, otherwise the original
-retrieved chunk text. The frontend merges whitespace/line wraps and spaces between
-Chinese characters without translating or rewriting the source. Numeric rows keep
-their line breaks rather than being joined into prose. To avoid always showing an
-unrelated chunk opening, sentence windows are ranked by shared claim terms and
-numbers. This is a display heuristic, not semantic evidence validation; the link
-still opens the complete original PDF page. It limits previews
-to 420 Unicode characters, preferring a complete sentence and avoiding a cut through
-English words or numeric values. Truncated previews include an ellipsis.
+The server validates the full source quote/chunk, then chooses an original passage
+of at most 400 characters plus omission markers. Sentence windows are ranked by
+shared claim terms/numbers, preferring complete sentences and whole English words
+or numeric values. This is a display heuristic, not semantic evidence validation.
+Within an answer, reference identity is the filename, PDF page and excerpt text
+with whitespace normalized. Repeated text at the same location reuses a number,
+including duplicate/overlapping chunks; different passages on one page have
+different numbers. Duplicate references within one claim appear only once.
+The same number always resolves to the same server-owned excerpt, including
+during streaming; the frontend never reselects it based on the clicked sentence.
+
+The frontend merges whitespace/line wraps and spaces between Chinese characters
+without translating or rewriting the source. Numeric rows keep their line breaks.
+It retains a 420-character display bound for older or extractive-mode excerpts.
+Truncated previews include an ellipsis. The link opens the complete PDF page.
 This display cleanup does not reconstruct tables; the original PDF retains its
 layout. Page fragments depend on the browser's PDF viewer. Exact paragraph
 positioning/highlighting would require an additional viewer and is outside this
@@ -260,16 +268,26 @@ The frontend assembles SSE frames and UTF-8 characters across network boundaries
 supports Stop and a 120-second timeout, and requires a final result. Errors or
 cancellation remove the incomplete turn and restore the question. Synchronous
 provider reads may finish their current read before releasing resources after
-client cancellation. No extra framework or AI call is needed for citation layout.
+client cancellation.
+
+`ProgressiveText` queues validated content and reveals Unicode characters on
+animation frames, with a higher playback rate for a longer queue. Final successful
+text continues through the same queue instead of appearing all at once. Citation
+markers reveal as complete buttons. A changed/rejected result replaces the preview
+immediately, and reset/cancellation removes pending animation. Extractive output,
+fixed refusals and reduced-motion preferences receive immediate text. Language
+switching does not replay or translate an answer. No extra model call is required
+for either playback or citation selection.
 
 ## 6. Conversations and languages
 
-Random session IDs separate stored conversations. Recent messages are loaded
-from SQLite; short/pronominal follow-ups include recent questions and the
-previous answer as context. That previous answer is not treated as new evidence:
-the current answer must still cite freshly retrieved source passages. This
-heuristic avoids a separate question-rewriting model call, but can carry stale
-context into a short question on a new topic.
+Random session IDs separate stored conversations. The latest three completed
+turns are loaded from SQLite for intent routing and grounded answer generation.
+Short or referential follow-ups add recent user questions to retrieval; previous
+assistant answers stay in the generation context only. The latest question is
+kept separate in the answer prompt, and all factual claims must cite freshly
+retrieved source passages. This heuristic avoids a separate rewriting model
+call but can carry stale topics into a short question; test topic changes too.
 
 The frontend lets the user choose English, Simplified Chinese or Traditional
 Chinese for the interface. `ui_language` localizes fixed notices, including
