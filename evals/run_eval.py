@@ -24,8 +24,14 @@ def main():
         for case in cases:
             request = {"message": case["question"], "ui_language": case["language"]}
             try:
+                prerequisites = case.get("prerequisite_questions", [])
                 if case.get("prerequisite_question"):
-                    prerequisite = client.post("/api/chat", json={"message": case["prerequisite_question"], "ui_language": case["language"]})
+                    prerequisites = [case["prerequisite_question"], *prerequisites]
+                for prior_question in prerequisites:
+                    prior_request = {"message": prior_question, "ui_language": case["language"]}
+                    if request.get("session_id"):
+                        prior_request["session_id"] = request["session_id"]
+                    prerequisite = client.post("/api/chat", json=prior_request)
                     prerequisite.raise_for_status()
                     request["session_id"] = prerequisite.json()["session_id"]
                 response = client.post("/api/chat", json=request)

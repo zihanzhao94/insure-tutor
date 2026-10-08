@@ -8,12 +8,14 @@ With the backend running, use:
 .venv/bin/python evals/run_eval.py --ids rate_en cooling_hant conflict_en injection_en
 ```
 
-These calls use the configured embedding/chat APIs. The twenty-two cases cover
+These calls use the configured embedding/chat APIs. The twenty-five cases cover
 English, Simplified and Traditional Chinese, policy conditions, follow-ups,
 missing evidence, a bilingual table discrepancy, unrelated questions, personal
 buying advice and prompt injection, plus document overviews, paraphrased advice,
 topic changes after history, ambiguous input and legitimate exclusion questions.
 Page numbers are one-based PDF file pages.
+`prerequisite_questions` sends multiple completed turns with the same session ID
+before checking the final question.
 The case's `language` sets `ui_language` for fixed notices only. No target
 language is sent to generation; the model defaults to the latest user's question
 and can follow an explicit language preference there.
@@ -26,3 +28,18 @@ words, and a correct paraphrase can fail a phrase check. Read the saved answers
 and exact source excerpts under `results/` and manually assess all conditions,
 amounts, interpretation, translation, and contradictions. Reports are ignored
 by Git. Unit tests in `backend/tests/` use mocked models and make no API calls.
+
+For chunk-size/overlap comparisons, run:
+
+```sh
+.venv/bin/python evals/retrieval_sweep.py
+```
+
+The nine page-labeled queries are in `retrieval_cases.jsonl`. The sweep uses the
+production splitter, embeddings and cosine-plus-keyword ranking for six parameter
+combinations, without changing the active Chroma index. Precision@5, Recall@5
+and MRR score distinct PDF pages among the five primary chunks. Context metrics
+include the application's page and disclosure expansion. The raw JSON report is
+written under `results/`; see `retrieval_results.md` for the comparison. These
+page labels are coarse: they do not grade which sentence within a page supports
+an answer. They also do not measure answer faithfulness or language quality.
