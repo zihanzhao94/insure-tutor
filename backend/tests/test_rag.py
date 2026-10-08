@@ -373,6 +373,48 @@ def test_key_points_uses_broad_evidence_with_a_short_answer_prompt(monkeypatch, 
     assert "one topic per claim" not in seen[0]
 
 
+def test_cautions_use_disclosure_evidence_without_assumed_rate_details(monkeypatch, tmp_path):
+    source = chunk(text="Cash withdrawals reduce cash value while monthly charges remain deductible.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    def forbidden(*a, **kw):
+        raise AssertionError("Cautions used narrow retrieval")
+    monkeypatch.setattr(query, "retrieve", forbidden)
+    seen = []
+    def generate(messages):
+        seen.append(messages[0]["content"])
+        return json.dumps({"status": "answered", "claims": [{
+            "text": "Cash withdrawals reduce cash value while monthly charges remain deductible.",
+            "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("有哪些条件值得注意", "zh-Hans", tmp_path, focus="cautions")
+    assert status == "answered" and citations and "Cash withdrawals" in answer
+    assert "Use NO numeric rates" in seen[0]
+
+
+def test_broad_cautions_repair_numeric_details_before_display(monkeypatch, tmp_path):
+    source = chunk(text="Monthly charges continue; if cash value is insufficient after 31 days, the policy may lapse.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    calls = []
+    def generate(messages):
+        calls.append(messages)
+        wording = ("After 31 days, the policy may lapse." if len(calls) == 1 else
+                   "Monthly charges may cause the policy to lapse when cash value is insufficient.")
+        return json.dumps({"status": "answered", "claims": [{
+            "text": wording, "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("有哪些条件值得注意", "zh-Hans", tmp_path, focus="cautions")
+    assert status == "answered" and citations and "31" not in answer
+    assert len(calls) == 2
+    assert "remove ALL numeric rates" in calls[1][-1]["content"]
+
+
+def test_broad_cautions_rejects_blanket_rate_claim():
+    answer = GeneratedAnswer.model_validate({"status": "answered", "claims": [{
+        "text": "本计划所有利率均非保证。", "evidence": ["plan:p8:c1"]}]})
+    with pytest.raises(ValueError, match="rates or figures"):
+        query._check_focus(answer, "cautions")
+
+
 @pytest.mark.parametrize("repair_succeeds", [True, False])
 def test_overview_repairs_bad_citations_once_then_validates_again(monkeypatch, tmp_path, repair_succeeds):
     source = chunk(text="The cooling-off period is 21 days, according to the brochure.")

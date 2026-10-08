@@ -216,6 +216,24 @@ def test_rag_never_exposes_claims_with_invalid_evidence(monkeypatch, tmp_path, i
     assert result["status"] == "insufficient_evidence" and result["citations"] == []
 
 
+def test_broad_cautions_stream_rejects_rate_preview_then_repairs(monkeypatch, tmp_path):
+    setup_rag(monkeypatch, [source("Monthly charges may cause lapse when cash value is insufficient. "
+                                  "Assumed interest rates may change.")])
+    calls = []
+    def stream(messages):
+        calls.append(messages)
+        wording = ("Assumed interest rates may change." if len(calls) == 1 else
+                   "Monthly charges may cause lapse when cash value is insufficient.")
+        yield answer_json(claim(wording))
+    monkeypatch.setattr(query, "stream_answer", stream)
+    events = list(query.stream_answer_question("有哪些条件值得注意", "zh-Hans", tmp_path,
+                                               focus="cautions"))
+    assert len(calls) == 2
+    assert any(event["event"] == "reset" for event in events)
+    assert "interest rates" not in delta_text(events)
+    assert final_result(events)["status"] == "answered"
+
+
 @pytest.mark.parametrize("ending", [
     "," + json.dumps(claim("The cooling-off period is 99 days.")) + "]}",
     "] trailing malformed response",

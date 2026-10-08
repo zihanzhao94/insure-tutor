@@ -18,6 +18,9 @@
 {"id": "overview_en", "question": "Summarize the main terms of this brochure.", "language": "en", "statuses": ["answered"], "source_pages": [8, 10, 11, 12, 14, 16], "expected_points": ["benefit", "charges", "15"]}
 {"id": "overview_important_typo_en", "question": "what is the most import part", "language": "en", "statuses": ["answered"], "source_pages": [8, 10, 11, 12, 14, 16], "expected_points": [["benefit", "coverage"], ["charge", "premium"]]}
 {"id": "topic_benifit_followup_en", "question": "benifit", "prerequisite_question": "what is the most import part", "language": "en", "statuses": ["answered"], "source_pages": [8, 9, 10, 11, 12], "expected_points": [["benefit", "coverage"]]}
+{"id": "life_options_hans", "question": "人寿保险有哪些选择", "language": "zh-Hans", "statuses": ["answered"], "source_pages": [7, 16], "expected_points": ["固定", ["遞增", "递增"], ["漸進", "渐进"]]}
+{"id": "cautions_followup_hans", "question": "有哪些条件值得注意", "prerequisite_question": "人寿保险有哪些选择", "language": "zh-Hans", "statuses": ["answered"], "source_pages": [10, 14, 15], "expected_points": ["退保", ["费用", "費用"], ["条款", "條款"]]}
+{"id": "cautions_document_hans", "question": "这份文件有哪些值得注意呢", "language": "zh-Hans", "statuses": ["answered"], "source_pages": [10, 14, 15], "expected_points": ["退保", ["费用", "費用"]]}
 {"id": "advice_paraphrase_hans", "question": "我月薪5000，这个计划适合我吗？", "language": "zh-Hans", "statuses": ["out_of_scope"], "source_pages": [], "expected_points": []}
 {"id": "advice_followup_en", "question": "Would you pick this for me?", "prerequisite_question": "How does the insurance cooling-off period work?", "language": "en", "statuses": ["out_of_scope"], "source_pages": [], "expected_points": []}
 {"id": "unrelated_followup_hans", "question": "帮我写一首关于天气的诗", "prerequisite_question": "停止缴付保费会怎样？", "language": "zh-Hans", "statuses": ["out_of_scope"], "source_pages": [], "expected_points": []}

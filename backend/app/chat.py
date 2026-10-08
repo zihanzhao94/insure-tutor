@@ -4,7 +4,7 @@ import re
 import uuid
 
 from .config import get_settings
-from .guardrails import check_input, classify_question, message
+from .guardrails import check_input, classify_question, localize, message
 from .rag.query import answer_question, load_index, stream_answer_question
 from .schemas import ChatRequest, ChatResponse
 from .storage import load_history, save_turn
@@ -40,6 +40,7 @@ def _chat_events(request, *, streaming):
     rejection = check_input(question, has_history=bool(history), rules_only=settings.chat_mode == "extractive")
     category = "document_qa"
     resolved = _short_topic_request(question)
+    implicit = _implicit_brochure_request(question)
     key_points = _is_brief_overview_request(question)
     effective_question = resolved[0] if resolved else question
     if rejection is None and settings.chat_mode == "llm":
@@ -48,6 +49,10 @@ def _chat_events(request, *, streaming):
         yield {"event": "status", "data": {"phase": "classifying"}}
         if resolved:
             category = resolved[1]
+        elif implicit:
+            # In this document tutor, this broad phrasing refers to the supplied
+            # brochure; it asks for neither a market comparison nor personal advice.
+            category = "document_overview"
         else:
             category = classify_question(question, history)
             if category == "uncertain" and key_points:
@@ -64,11 +69,23 @@ def _chat_events(request, *, streaming):
         return
     # Search may include previous user topics; answer generation still receives the
     # latest question separately so it does not answer an earlier turn again.
-    query = effective_question if resolved else _retrieval_query(question, history)
-    options = ({"key_points": True} if key_points else
-               {"overview": True} if category == "document_overview" else {})
+    if resolved:
+        query = effective_question
+    elif implicit:
+        query = implicit[0]
+    else:
+        query = _retrieval_query(question, history)
+    if implicit:
+        options = {"focus": implicit[1]}
+    elif key_points:
+        options = {"key_points": True}
+    else:
+        options = {"overview": True} if category == "document_overview" else {}
     if history:
         options.update(current_question=effective_question, conversation=history)
+    elif implicit:
+        # Keep the user's original wording/script for generation; only search is scoped.
+        options["current_question"] = question
     yield {"event": "status", "data": {"phase": "retrieving"}}
     if streaming:
         final = None
@@ -134,4 +151,15 @@ def _short_topic_request(question: str) -> tuple[str, str] | None:
     resolved = english.get(topic) or chinese.get(topic)
     if resolved:
         return resolved, "document_overview" if topic in {"summary", "总结", "總結"} else "document_qa"
+    return None
+
+
+def _implicit_brochure_request(question: str) -> tuple[str, str] | None:
+    """Scope broad "what should I watch for" questions without weakening advice or misuse rules."""
+    normalized = re.sub(r"[\s?？。！!]+$", "", localize(question, "zh-Hans").strip())
+    if re.fullmatch(
+            r"(?:(?:这份|这个|该)(?:文件|文档|宣传册|保单|保险计划))?"
+            r"(?:都)?有(?:哪|那)些(?:条件|条款|事项|风险)?(?:值得|需要|要)?"
+            r"(?:注意|留意)(?:的)?(?:呢|吗)?", normalized):
+        return ("这份保险宣传册有哪些重要限制、费用及风险值得留意？", "cautions")
     return None

@@ -189,7 +189,7 @@ if that rate had applied, including total interest and Extra Bonus, after at lea
 """
 
 
-def _answer_messages(question, evidence, overview, conversation=None, key_points=False):
+def _answer_messages(question, evidence, overview, conversation=None, key_points=False, focus=None):
     """Give the model the latest question, recent turns, and retrieved PDF text.
 
     Conversation resolves references; only the supplied passages can support a
@@ -211,6 +211,20 @@ amounts, ages, dates and waiting periods unless essential to the latest question
 Do not list all exclusions or imply that non-guaranteed returns are guaranteed.
 Every claim still needs citations from the supplied passages.
 """
+    if focus == "cautions":
+        instruction += """\nThe user asks what conditions or cautions in THIS brochure
+deserve attention. Give at most three short claims: (1) monthly charges and
+lapse risk when cash value is insufficient, (2) possible loss on early surrender,
+and (3) changeable non-guaranteed charges and full policy conditions.
+Cite the relevant Notes and Key Product Disclosures. Use NO numeric rates,
+amounts, dates, ages or waiting periods in this broad summary. Do not list
+individual medical exclusions; say that benefit exclusions and eligibility
+conditions exist and direct the user to the full policy for details. Avoid
+discussing interest, returns, or guarantees in this short answer; the brochure
+distinguishes assumed crediting rates from an accumulated account-value
+guarantee, which needs a separate precise explanation. Make no personal
+recommendation.
+"""
     if overview:
         instruction += """\nGive an educational overview with one topic per claim, in this order:
 benefits; premiums/monthly charges and lapse; interest/guarantees; withdrawals and
@@ -230,7 +244,7 @@ Explain risks without recommending purchase.
     return [{"role": "system", "content": instruction}, {"role": "user", "content": prompt}]
 
 
-def _repair_messages(messages, raw):
+def _repair_messages(messages, raw, focus=None):
     """Request one corrected answer without inventing missing evidence."""
     messages.extend([
         {"role": "assistant", "content": raw},
@@ -238,25 +252,39 @@ def _repair_messages(messages, raw):
          "Check EVERY number and condition against the exact cited chunks. Add the needed supplied "
          "source IDs, or remove unsupported statements. Do not invent sources or facts. "
          "This is internal validation feedback, not a new end-user question. Keep the language "
-         "and Chinese script appropriate to the original end-user question and its explicit preference."},
+         "and Chinese script appropriate to the original end-user question and its explicit preference."
+         + (" For this broad cautions answer, remove ALL numeric rates, amounts, dates, ages and periods. "
+            "Avoid statements about interest, returns, or guarantees; this short answer should cover charges, "
+            "lapse, surrender, and full policy conditions only. Do not list individual medical exclusions."
+            if focus == "cautions" else "")},
     ])
 
 
-def _parse_answer(raw, evidence):
+def _check_focus(answer, focus):
+    """Keep broad caution summaries qualitative; detailed numbers need a specific question."""
+    if focus == "cautions" and any(
+            re.search(r"\d|利率|息率|派息率|利息|回报|回報|收益|\b(?:interest|crediting|returns?)\b", claim.text, re.I)
+            for claim in answer.claims):
+        raise ValueError("A broad cautions answer must not discuss specific rates or figures.")
+
+
+def _parse_answer(raw, evidence, focus=None):
     """Validate complete JSON and apply the existing source and number checks."""
     stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
     answer = GeneratedAnswer.model_validate_json(stripped)
     validate_answer(answer, evidence)
+    _check_focus(answer, focus)
     return answer
 
 
 def answer_question(question: str, ui_language: Language, index_dir: Path,
                     *, top_k: int | None = None, overview: bool = False, key_points: bool = False,
+                    focus: str | None = None,
                     current_question: str | None = None,
                     conversation: list[dict[str, str]] | None = None) -> tuple[str, list[Citation], str]:
     """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
     settings = get_settings()
-    evidence = retrieve_overview(index_dir) if overview or key_points else retrieve(question, index_dir, top_k or settings.top_k)
+    evidence = retrieve_overview(index_dir) if overview or key_points or focus == "cautions" else retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:
         return message("insufficient_evidence", ui_language), [], "insufficient_evidence"
     if settings.chat_mode == "extractive":
@@ -266,15 +294,15 @@ def answer_question(question: str, ui_language: Language, index_dir: Path,
         return text, citations, "answered"
     answer = source_conflict(current_question or question, evidence, ui_language)
     if answer is None:
-        messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points)
+        messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus)
         # Allow one bounded repair when the model omits a needed source ID or number.
         for attempt in range(2):
             raw = generate_answer(messages)
             try:
-                answer = _parse_answer(raw, evidence)
+                answer = _parse_answer(raw, evidence, focus)
                 break
             except (ValueError, TypeError):
-                _repair_messages(messages, raw)
+                _repair_messages(messages, raw, focus)
         else:
             # Fail closed even if the repair still contains unverifiable claims.
             return message("insufficient_evidence", ui_language), [], "insufficient_evidence"
@@ -370,6 +398,7 @@ def _result_event(answer, citations, status):
 
 def stream_answer_question(question: str, ui_language: Language, index_dir: Path,
                            *, top_k: int | None = None, overview: bool = False, key_points: bool = False,
+                           focus: str | None = None,
                            current_question: str | None = None,
                            conversation: list[dict[str, str]] | None = None):
     """Release each complete claim only after checking its cited PDF passages.
@@ -381,10 +410,10 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
     settings = get_settings()
     if settings.chat_mode == "extractive":
         yield _result_event(*answer_question(question, ui_language, index_dir, top_k=top_k, overview=overview,
-                                            key_points=key_points, current_question=current_question,
+                                            key_points=key_points, focus=focus, current_question=current_question,
                                             conversation=conversation))
         return
-    evidence = retrieve_overview(index_dir) if overview or key_points else retrieve(question, index_dir, top_k or settings.top_k)
+    evidence = retrieve_overview(index_dir) if overview or key_points or focus == "cautions" else retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:
         yield _result_event(message("insufficient_evidence", ui_language), [], "insufficient_evidence")
         return
@@ -393,7 +422,7 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
         validate_answer(answer, evidence)
         yield _result_event(*_render_answer(answer, evidence, ui_language))
         return
-    messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points)
+    messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus)
     for attempt in range(2):
         if attempt:
             yield {"event": "reset", "data": {}}
@@ -407,6 +436,7 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
             try:
                 partial = GeneratedAnswer.model_validate({"status": status, "claims": claims})
                 validate_answer(partial, evidence)
+                _check_focus(partial, focus)
                 text, citations, _ = _render_answer(partial, evidence, ui_language, disclaimer=False)
             except (ValueError, TypeError):
                 invalid_prefix = True
@@ -418,9 +448,9 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
         # Never store a prefix or treat a disconnected provider as a final answer.
         yield {"event": "status", "data": {"phase": "checking"}}
         try:
-            answer = _parse_answer(raw, evidence)
+            answer = _parse_answer(raw, evidence, focus)
         except (ValueError, TypeError):
-            _repair_messages(messages, raw)
+            _repair_messages(messages, raw, focus)
             continue
         text, citations, status = _render_answer(answer, evidence, ui_language)
         if status != "insufficient_evidence" and text.startswith(displayed):
