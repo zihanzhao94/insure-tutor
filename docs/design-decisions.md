@@ -72,7 +72,7 @@ on the backend in environment configuration.
 
 The models have different jobs. The embedding model converts text into vectors
 for retrieval; it does not compose answers. The chat model explains the retrieved
-evidence in a language it chooses from the question; it does not create the search index.
+evidence in the language selected in the interface; it does not create the search index.
 
 The practical reason for keeping `gpt-4.1-mini` is its structured-output support
 and the functioning, evaluated baseline. The backend requests a strict JSON
@@ -290,14 +290,16 @@ retrieved source passages. This heuristic avoids a separate rewriting model
 call but can carry stale topics into a short question; test topic changes too.
 
 The frontend lets the user choose English, Simplified Chinese or Traditional
-Chinese for the interface. `ui_language` localizes fixed notices, including
-refusals and disclaimers; it is never included in the answer-generation prompt.
-The model defaults to the language/script of the latest end-user question and
-can follow an explicit language preference written there. English source text,
-history and internal validation feedback must not choose the response language.
-The repair prompt identifies itself as internal feedback and preserves the
-original question's language preference. Generated claims
-are preserved without translation, script conversion or language-detection rules.
+Chinese. `ui_language` localizes fixed notices, including refusals and
+disclaimers, and is sent to answer generation as `answer_language`, so fixed
+text and generated claims share one language and Chinese script. An earlier
+version let the model pick the language from the question; with a Traditional
+Chinese brochure it sometimes answered Simplified questions in Traditional.
+An explicit request in the latest question to answer in another language still
+takes precedence. English source text, history and internal validation feedback
+must not choose the response language; the repair prompt identifies itself as
+internal feedback and keeps the requested language. This is a prompt
+instruction: generated claims are not translated or script-converted afterwards.
 OpenCC still normalizes Chinese for retrieval/input rules and translates fixed
 notices. Starting a new conversation or refreshing the interface starts a new
 UI session. Stored session IDs provide separation, not access control.

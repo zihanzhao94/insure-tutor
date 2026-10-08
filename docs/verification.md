@@ -1,5 +1,47 @@
 # Verification record
 
+## Answer language follows the selector (2026-10-08)
+
+- Reproduced Simplified Chinese questions answered in Traditional Chinese (the
+  brochure's script), and one-word Traditional topics answered in Simplified.
+- The selected interface language is now sent to generation as
+  `answer_language`; an explicit request in the question still overrides it.
+- **115 backend tests and 17 frontend tests passed.** After rebuilding both
+  containers, 13 live `/api/chat` checks returned the selected language/script,
+  including three repeats of a question that had previously switched script, a
+  Simplified question under the Traditional setting and a Chinese question
+  under the English setting. An explicit "answer in English" request was followed.
+- All 28 end-to-end cases were run in one pass for the first time: **27/28
+  passed** (`evals/results/20261008T031840Z.json`, local, ignored by Git).
+  `overview_hans` returned `insufficient_evidence` in that pass and then passed
+  three of three reruns, so overview answers can still intermittently fail
+  source/number validation and fall back to the fixed notice.
+
+## Broad brochure questions (2026-10-08)
+
+- Reproduced a false `out_of_scope` classification for `人寿保险有哪些选择`.
+  The supplied brochure actually lists death benefit options on PDF page 7.
+- The intent prompt now states that the brochure is the implicit subject of
+  broad insurance questions, which is what admits that wording and its
+  rephrasings. An exact-wording route for it was tried and removed: it matched
+  only one phrasing, while the classifier handled the variants anyway.
+- Added narrow document-scope routing for two common "conditions worth noting"
+  phrasings. Personal purchase advice and unrelated questions still pass through
+  the intent classifier; injection rules run first.
+- Broad cautions now use disclosure evidence and a short qualitative prompt.
+  Numeric or interest/return claims in this broad answer are rejected before
+  display and may be repaired once. Specific questions about rates and guarantees
+  still use the normal evidence-grounded answer path.
+- **115 backend tests passed.** After rebuilding the Docker backend, the three
+  screenshot questions plus personal-advice and unrelated-topic controls passed
+  **5/5 live API smoke checks**. Report:
+  `evals/results/20261008T025305Z.json` (local, ignored by Git). Manual review
+  found the options answer cited PDF pages 7 and 16, while both caution answers
+  cited the Key Product Disclosures on page 14. Source and numeric checks still
+  do not prove every paraphrase is semantically correct.
+- A live `/api/chat/stream` caution question returned `answered` with four
+  validated delta events and page-14 citations; it did not expose rate figures.
+
 ## Assignment checklist review (2026-10-08)
 
 Compared the repository with [the take-home task](TakeHomeTask-InsureTutor.md).

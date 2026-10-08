@@ -8,7 +8,7 @@ With the backend running, use:
 .venv/bin/python evals/run_eval.py --ids rate_en cooling_hant conflict_en injection_en
 ```
 
-These calls use the configured embedding/chat APIs. The twenty-five cases cover
+These calls use the configured embedding/chat APIs. The twenty-eight cases cover
 English, Simplified and Traditional Chinese, policy conditions, follow-ups,
 missing evidence, a bilingual table discrepancy, unrelated questions, personal
 buying advice and prompt injection, plus document overviews, paraphrased advice,
@@ -16,9 +16,9 @@ topic changes after history, ambiguous input and legitimate exclusion questions.
 Page numbers are one-based PDF file pages.
 `prerequisite_questions` sends multiple completed turns with the same session ID
 before checking the final question.
-The case's `language` sets `ui_language` for fixed notices only. No target
-language is sent to generation; the model defaults to the latest user's question
-and can follow an explicit language preference there.
+The case's `language` sets `ui_language`, which selects the fixed notices and is
+sent to generation as the answer language. An explicit language request in the
+question can still override it.
 
 The runner checks response status, at least one expected source page, selected
 answer phrases/numbers, and empty citations for refusals. A missing-detail case accepts either a refusal or an explicitly sourced

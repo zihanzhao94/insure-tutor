@@ -16,10 +16,12 @@ lines and spaced Chinese characters, while preserving English words and policy
 figures. Numeric rows retain their line breaks. Long excerpts are shortened with
 an ellipsis; the PDF retains the original
 table layout. Close the dialog with its close button, Escape or the backdrop.
-The language selector changes the interface and fixed system notices only.
-The model chooses its response language from the latest user question by default,
-including an explicit preference in that question. Generated text is not translated or
-converted between Chinese scripts by the application.
+The language selector sets the interface, the fixed system notices and the
+answer language: the selection is sent to the model with each question, so
+answers stay in one language and Chinese script regardless of the source text.
+An explicit request in the question to answer in another language still takes
+precedence. This is a prompt instruction; generated text is not translated or
+converted between Chinese scripts by the application afterwards.
 
 ## Quick start with Docker
 
@@ -245,7 +247,12 @@ evals/               Source-grounded API smoke cases and runner
   questions to RAG and rejects unrelated/personal-advice requests. Unclear input
   requests clarification. Provider errors and malformed labels are reported as
   API failures and never allow retrieval. Clear questions do not need an insurance
-  keyword, and missing source evidence is decided after retrieval.
+  keyword, and missing source evidence is decided after retrieval. The classifier
+  treats the brochure as the implicit subject of broad insurance questions (for
+  example about coverage options). A few common "what should I watch for"
+  phrasings are scoped to the brochure before classification; personal advice and
+  unrelated requests still use the intent guardrail. Broad caution summaries stay qualitative:
+  unsupported figures and rate/return claims are withheld for repair.
   Overviews include the brochure's at-a-glance table and retrieve five fixed
   topics (benefits, premiums/charges, cancellation, interest and exclusions).
   They interleave/deduplicate sources and keep the same
