@@ -36,9 +36,12 @@ def _chat_events(request, *, streaming):
         raise ValueError("Please enter a question.")
     yield {"event": "start", "data": {"session_id": session_id,
            "mode": settings.chat_mode}}
+    # One turn is a question plus an answer, so load two messages per turn.
     history = load_history(session_id, settings.data_dir, limit=2 * settings.memory_turns)
+    # Step 1: rule-based input check (prompt injection and similar).
     rejection = check_input(question, has_history=bool(history), rules_only=settings.chat_mode == "extractive")
     category = "document_qa"
+    # Regex shortcuts for one-word topics and very broad questions; a match skips the classifier.
     resolved = _short_topic_request(question)
     implicit = _implicit_brochure_request(question)
     key_points = _is_brief_overview_request(question)
@@ -47,6 +50,7 @@ def _chat_events(request, *, streaming):
         # Check setup before spending tokens on classification.
         load_index(settings.data_dir / "index")
         yield {"event": "status", "data": {"phase": "classifying"}}
+        # Step 2: decide the route, by shortcut or by one short model call.
         if resolved:
             category = resolved[1]
         elif implicit:
@@ -57,8 +61,10 @@ def _chat_events(request, *, streaming):
             category = classify_question(question, history)
             if category == "uncertain" and key_points:
                 category = "document_overview"
+        # Categories that must be refused map to a fixed reply; the rest continue to RAG.
         rejection = {"personal_advice": "out_of_scope", "out_of_scope": "out_of_scope",
                      "blocked": "blocked", "uncertain": "clarification_required"}.get(category)
+    # Refusals return a predefined message: no retrieval and no generation.
     if rejection:
         answer = message(rejection, request.ui_language)
         if rejection == "clarification_required":
@@ -69,12 +75,14 @@ def _chat_events(request, *, streaming):
         return
     # Search may include previous user topics; answer generation still receives the
     # latest question separately so it does not answer an earlier turn again.
+    # Step 3: choose the text used for retrieval.
     if resolved:
         query = effective_question
     elif implicit:
         query = implicit[0]
     else:
         query = _retrieval_query(question, history)
+    # Step 4: choose the answer style: cautions, key points, full overview, or a normal answer.
     if implicit:
         options = {"focus": implicit[1]}
     elif key_points:
@@ -87,6 +95,8 @@ def _chat_events(request, *, streaming):
         # Keep the user's original wording/script for generation; only search is scoped.
         options["current_question"] = question
     yield {"event": "status", "data": {"phase": "retrieving"}}
+    # Step 5: retrieve, generate and validate. Preview events pass through to the
+    # client; the final result is held back so it can be saved first.
     if streaming:
         final = None
         for event in stream_answer_question(query, request.ui_language, settings.data_dir / "index", **options):

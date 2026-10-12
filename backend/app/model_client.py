@@ -60,6 +60,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         if settings.model_api_key.startswith("sk-ant-"):
             raise ModelError("Replace the Claude key in .env with your OpenAI API key.")
         vectors = []
+        # Send 32 texts per request and restore input order from each record's index.
         for start in range(0, len(texts), 32):
             batch = texts[start:start + 32]
             data = _post(settings.model_base_url + "/embeddings",
@@ -113,10 +114,14 @@ def stream_answer(messages: list[dict[str, str]]):
         raise ModelError("Set MODEL_API_KEY in .env to enable generated answers.")
     if settings.model_api_key.startswith("sk-ant-"):
         raise ModelError("Replace the Claude key in .env with your OpenAI API key.")
+    # A strict json_schema makes the provider constrain output to ANSWER_JSON_SCHEMA
+    # while generating; temperature 0 keeps answers repeatable.
     body = {"model": settings.chat_model, "messages": messages, "stream": True,
             "response_format": {"type": "json_schema", "json_schema": {
                 "name": "grounded_answer", "strict": True, "schema": ANSWER_JSON_SCHEMA}},
             "temperature": 0, "max_tokens": 2200}
+    # finished: a normal stop reason arrived; done: the [DONE] marker arrived;
+    # has_text: some content arrived. All three are required for a complete answer.
     finished, done, has_text = False, False, False
     try:
         with httpx.stream("POST", settings.model_base_url + "/chat/completions",
@@ -187,6 +192,8 @@ def generate_json(messages: list[dict[str, str]], schema: dict, name: str, *, ma
             return content
         except (KeyError, IndexError, TypeError) as exc:
             raise ModelError("OpenAI returned an unexpected answer format.") from exc
+    # Optional Claude path: no schema is sent here, so the caller's Pydantic
+    # validation is the only structure check.
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     conversation = [m for m in messages if m["role"] in {"user", "assistant"}]
     base = settings.model_base_url

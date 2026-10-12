@@ -24,6 +24,8 @@ _converter = OpenCC("t2s")
 
 @dataclass
 class VectorIndex:
+    """The loaded index: all chunk records, the Chroma collection, and its build settings."""
+
     chunks: list[DocumentChunk]
     collection: Collection
     metadata: dict[str, str]
@@ -65,9 +67,11 @@ def load_index(index_dir: Path) -> VectorIndex:
 
 def _terms(text: str) -> Counter:
     """Count English terms, numbers, and Chinese bigrams for lexical matching."""
+    # Convert Traditional to Simplified so both scripts match the same terms.
     text = _converter.convert(text).lower()
     english = re.findall(r"[a-z]{3,}|\d+(?:\.\d+)?%?", text)
     chinese = re.findall(r"[\u4e00-\u9fff]+", text)
+    # Chinese has no spaces, so use overlapping character pairs: 保费规则 -> 保费, 费规, 规则.
     return Counter(english + [part[i:i + 2] for part in chinese for i in range(len(part) - 1)])
 
 
@@ -78,19 +82,23 @@ def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChu
     pages can then add more chunks, so it is not the final reference count.
     """
     index = load_index(index_dir)
+    # 1. Embed the question with the same model that embedded the chunks.
     vector = embed_texts([question])[0]
     if len(vector) != int(index.metadata["dimension"]):
         raise ValueError("Embedding dimension mismatch. Rebuild the index.")
+    # 2. Semantic score. Chroma returns cosine distance, so similarity = 1 - distance.
     # Score the entire tiny brochure corpus to preserve lexical recall.
     matches = index.collection.query(query_embeddings=[vector], n_results=len(index.chunks),
                                      include=["distances"])
     semantic = dict(zip(matches["ids"][0],
                         [1.0 - distance for distance in matches["distances"][0]], strict=True))
+    # 3. Keyword score: how many of the question's terms each chunk contains.
     terms = _terms(question)
     chunk_terms = [_terms(chunk.text) for chunk in index.chunks]
     lexical = [sum(min(count, counts[term]) for term, count in terms.items())
                for counts in chunk_terms]
     maximum = max(lexical) or 1
+    # 4. Final score = semantic similarity + a keyword bonus of at most 0.12.
     scores = {chunk.chunk_id: semantic[chunk.chunk_id] + 0.12 * count / maximum
               for chunk, count in zip(index.chunks, lexical, strict=True)}
     chosen = sorted(index.chunks, key=lambda chunk: -scores[chunk.chunk_id])[:max(1, top_k)]
@@ -98,6 +106,8 @@ def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChu
     if semantic[chosen[0].chunk_id] < 0.2 and not any(
             term in _terms(chosen[0].text) for term in terms):
         return []
+    # 5. Add context: the rest of the pages holding the top three chunks, plus
+    # Notes and disclosure pages, so footnotes travel with the benefits they qualify.
     docs = {chunk.document_id for chunk in chosen}
     pages = {(chunk.document_id, chunk.pdf_page) for chunk in chosen[:3]}
     supporting_pages = {(chunk.document_id, chunk.pdf_page) for chunk in index.chunks
@@ -106,6 +116,7 @@ def retrieve(question: str, index_dir: Path, top_k: int = 5) -> list[DocumentChu
                   if chunk.document_id in docs and (
                       (chunk.document_id, chunk.pdf_page) in pages or
                       (chunk.document_id, chunk.pdf_page) in supporting_pages)]
+    # 6. Ranked chunks go first; stop adding once the 17,000-character budget is full.
     result, seen, size = [], set(), 0
     for chunk in chosen + contextual:
         if chunk.chunk_id not in seen and size + len(chunk.text) <= 17000:
@@ -136,6 +147,7 @@ def retrieve_overview(index_dir: Path) -> list[DocumentChunk]:
         "exclusions suicide incontestability key product disclosures",
     ]
     groups = [summary] + [retrieve(topic, index_dir, top_k=2) for topic in topics]
+    # Take one chunk from each group in turn so no single topic uses the whole budget.
     result, seen, size = [], set(), 0
     for row in zip_longest(*groups):
         for chunk in row:
@@ -292,14 +304,17 @@ def answer_question(question: str, ui_language: Language, index_dir: Path,
                     conversation: list[dict[str, str]] | None = None) -> tuple[str, list[Citation], str]:
     """Retrieve evidence, generate and validate claims, then return the answer, citations, and status."""
     settings = get_settings()
+    # Broad questions search a fixed set of topics; specific ones use normal retrieval.
     evidence = retrieve_overview(index_dir) if overview or key_points or focus == "cautions" else retrieve(question, index_dir, top_k or settings.top_k)
     if not evidence:
         return message("insufficient_evidence", ui_language), [], "insufficient_evidence"
+    # Extractive mode skips generation and shows the top passages unchanged.
     if settings.chat_mode == "extractive":
         citations = [_citation(chunk, chunk.text) for chunk in evidence[:3]]
         text = message("extractive", ui_language) + "\n\n" + "\n\n".join(
             f"[{i}] {citation.excerpt}" for i, citation in enumerate(citations, 1))
         return text, citations, "answered"
+    # The known bilingual mismatch is answered from a fixed template, not by the model.
     answer = source_conflict(current_question or question, evidence, ui_language)
     if answer is None:
         messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus, ui_language)
@@ -356,9 +371,11 @@ def _render_answer(answer, evidence, ui_language, *, disclaimer=True):
         markers = []
         for ref in claim.evidence:
             chunk = sources[ref.chunk_id]
+            # Page, filename and excerpt come from the stored chunk, never from the model.
             excerpt = _source_excerpt(ref.quote or chunk.text, claim.text)
             # A reference identifies original text at a location, not just a page or chunk.
             key = (chunk.filename, chunk.pdf_page, re.sub(r"\s+", "", excerpt).strip("…"))
+            # Two claims citing the same passage share one reference number.
             if key not in citation_numbers:
                 citations.append(_citation(chunk, excerpt))
                 citation_numbers[key] = len(citations)
@@ -400,6 +417,7 @@ def _completed_claims(raw):
 
 
 def _result_event(answer, citations, status):
+    """Build the final event: the complete answer that replaces any streamed preview."""
     return {"event": "result", "data": {"answer": answer, "status": status,
             "citations": [citation.model_dump() for citation in citations]}}
 
@@ -431,25 +449,31 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
         yield _result_event(*_render_answer(answer, evidence, ui_language))
         return
     messages = _answer_messages(current_question or question, evidence, overview, conversation, key_points, focus, ui_language)
+    # Attempt 0 is the first answer; attempt 1 is the single repair.
     for attempt in range(2):
         if attempt:
+            # Tell the interface to clear the preview from the failed attempt.
             yield {"event": "reset", "data": {}}
         yield {"event": "status", "data": {"phase": "generating"}}
         raw, displayed, count, invalid_prefix = "", "", 0, False
         for delta in stream_answer(messages):
             raw += delta
+            # Wait until the buffered JSON holds a new complete claim.
             status, claims = _completed_claims(raw)
             if invalid_prefix or status not in {"answered", "conflict"} or len(claims) <= count:
                 continue
             try:
+                # Check the claims received so far before showing any of them.
                 partial = GeneratedAnswer.model_validate({"status": status, "claims": claims})
                 validate_answer(partial, evidence)
                 _check_focus(partial, focus)
                 text, citations, _ = _render_answer(partial, evidence, ui_language, disclaimer=False)
             except (ValueError, TypeError):
+                # Stop previewing; the full check after the stream decides what happens.
                 invalid_prefix = True
                 continue
             count = len(claims)
+            # Send only the text added since the last update.
             yield {"event": "delta", "data": {"text": text[len(displayed):],
                    "citations": [citation.model_dump() for citation in citations]}}
             displayed = text
@@ -466,4 +490,5 @@ def stream_answer_question(question: str, ui_language: Language, index_dir: Path
                    "citations": [citation.model_dump() for citation in citations]}}
         yield _result_event(text, citations, status)
         return
+    # Both attempts failed validation, so refuse instead of showing an unverified answer.
     yield _result_event(message("insufficient_evidence", ui_language), [], "insufficient_evidence")

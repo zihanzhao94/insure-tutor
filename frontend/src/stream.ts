@@ -8,7 +8,10 @@ export type ChatStreamEvent =
   | { event: "reset"; data: Record<string, never> }
   | { event: "result"; data: ChatResponse };
 
-/** Assemble SSE frames across arbitrary network and CRLF boundaries. */
+/**
+ * Assemble SSE frames across arbitrary network and CRLF boundaries.
+ * A frame is an "event: name" line and a "data: json" line, ended by a blank line.
+ */
 export class SseParser {
   private buffer = "";
   private event = "message";
@@ -26,12 +29,14 @@ export class SseParser {
       const line = this.buffer.slice(0, boundary);
       const width = this.buffer.slice(boundary, boundary + 2) === "\r\n" ? 2 : 1;
       this.buffer = this.buffer.slice(boundary + width);
+      // A blank line ends the frame: deliver it and start a new one.
       if (!line) {
         const event = this.event;
         const data = this.data;
         this.event = "message";
         this.data = [];
         if (data.length) this.receive(event, data.join("\n"));
+      // Otherwise store the field; lines starting with ":" are comments.
       } else if (!line.startsWith(":")) {
         const colon = line.indexOf(":");
         const field = colon < 0 ? line : line.slice(0, colon);
@@ -76,6 +81,7 @@ export async function readChatStream(
   const cancel = () => { void reader.cancel(signal?.reason).catch(() => {}); };
   signal?.addEventListener("abort", cancel, { once: true });
   try {
+    // Read network chunks until the final result frame has been parsed.
     while (!result) {
       signal?.throwIfAborted();
       const { value, done } = await reader.read();

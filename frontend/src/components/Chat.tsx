@@ -4,6 +4,7 @@ import { copy } from "../copy";
 import type { ChatResponse, Citation, Health, Language } from "../types";
 import type { StreamPhase } from "../stream";
 import AnswerText from "./AnswerText";
+// A draft is the answer in progress; it is replaced by a response when the final result arrives.
 interface Draft {
   answer: string; citations: Citation[];
   mode: ChatResponse["mode"]; phase: StreamPhase;
@@ -18,6 +19,8 @@ export default function Chat({ language }: { language: Language }) {
   const [healthError, setHealthError] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
+  // Refs hold values that should not cause a re-render: the session ID, the
+  // request in flight, and DOM nodes.
   const session = useRef<string | undefined>(undefined);
   const activeRequest = useRef<AbortController | null>(null);
   const latest = useRef<HTMLDivElement>(null);
@@ -32,6 +35,7 @@ export default function Chat({ language }: { language: Language }) {
   useEffect(() => () => activeRequest.current?.abort(), []);
   useEffect(() => { if (!busy && turns.length) input.current?.focus(); }, [busy]);
   useEffect(() => { if (turns.length) latest.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [turns, busy]);
+  // Sending is enabled only when the backend has an index and a usable model.
   const ready = health?.index_ready && (health.model_configured || health.mode === "extractive");
   async function submit() {
     const text = question.trim();
@@ -39,6 +43,7 @@ export default function Chat({ language }: { language: Language }) {
     const controller = new AbortController();
     activeRequest.current = controller;
     setBusy(true); setError(""); setQuestion("");
+    // Show the question at once with an empty draft; stream events fill it in.
     setTurns(previous => [...previous, { question: text, draft: {
       answer: "", citations: [], mode: health?.mode || "llm", phase: "classifying",
     } }]);
@@ -51,16 +56,20 @@ export default function Chat({ language }: { language: Language }) {
       const response = await sendMessageStream({ message: text, ui_language: language, session_id: session.current }, event => {
         if (activeRequest.current !== controller || controller.signal.aborted) return;
         switch (event.event) {
+          // The server created or confirmed the session ID used for follow-ups.
           case "start":
             session.current = event.data.session_id;
             updateDraft(draft => ({ ...draft, mode: event.data.mode }));
             break;
+          // Progress label: classifying, retrieving, generating or checking.
           case "status":
             updateDraft(draft => ({ ...draft, phase: event.data.phase }));
             break;
+          // One more validated statement; append it to the preview.
           case "delta":
             updateDraft(draft => ({ ...draft, answer: draft.answer + event.data.text, citations: event.data.citations }));
             break;
+          // Validation failed and the server is retrying; clear the preview.
           case "reset":
             updateDraft(draft => ({ ...draft, answer: "", citations: [] }));
             break;
@@ -73,6 +82,7 @@ export default function Chat({ language }: { language: Language }) {
       setTurns(previous => previous.map((turn, i) => i === previous.length - 1 ? { question: turn.question, response } : turn));
     } catch (err) {
       if (activeRequest.current !== controller) return;
+      // On failure, remove the unfinished turn and put the question back in the box.
       if (!controller.signal.aborted) setError(err instanceof Error ? err.message : t.error);
       setQuestion(text);
       setTurns(previous => previous.slice(0, -1));

@@ -22,6 +22,7 @@ def extract_page_text(page: PageObject) -> str:
     fragments = []
     left, bottom, right, _ = (float(value) for value in page.cropbox)
 
+    # pypdf calls this once per text fragment; keep all but footer page numbers.
     def collect(text, cm, tm, font, font_size):
         # Use page coordinates, including transforms inside PDF form objects.
         x = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
@@ -56,15 +57,21 @@ def split_pages(pages: list[DocumentPage], chunk_size: int | None = None,
                 chunk_overlap: int | None = None) -> list[DocumentChunk]:
     """Split pages into character-based chunks with source metadata; chunks never cross pages."""
     settings = get_settings()
+    # Try to cut at paragraph breaks first, then lines, then Chinese sentence
+    # ends, then spaces. Lengths are counted in characters, not tokens.
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size if chunk_size is not None else settings.chunk_size,
         chunk_overlap=chunk_overlap if chunk_overlap is not None else settings.chunk_overlap,
         length_function=len, separators=["\n\n", "\n", "。", "！", "？", "；", " ", ""],
     )
     chunks = []
+    # Outer loop: one page at a time, so no chunk can span two pages.
     for page in pages:
+        # Use the page's first real line as a rough section title.
         section = next((line.strip() for line in page.text.splitlines() if len(line.strip()) > 3), None)
         source_hash = hashlib.sha256(page.text.encode()).hexdigest()
+        # Inner loop: one page usually yields several chunks. Each chunk copies
+        # the page's filename and page number; its ID looks like "doc:p8:c2".
         for number, text in enumerate(splitter.split_text(page.text), start=1):
             chunks.append(DocumentChunk(
                 **page.model_dump(exclude={"text"}), text=text,
@@ -78,11 +85,13 @@ def build_index(chunks: list[DocumentChunk], index_dir: Path, fingerprint: str =
     if not chunks:
         raise ValueError("Cannot build an empty index.")
     settings = get_settings()
+    # Only the chunk text is embedded; page numbers are stored beside the vector.
     vectors = embed_texts([chunk.text for chunk in chunks])
     if len(vectors) != len(chunks):
         raise ValueError("Embedding count does not match the chunk count.")
     index_dir.mkdir(parents=True, exist_ok=True)
     client = get_client(str((index_dir / "chroma").resolve()))
+    # Build into a new collection; the current one stays active until this succeeds.
     name = f"insurance-{uuid4().hex}"
     collection = client.create_collection(
         name=name, embedding_function=None, configuration={"hnsw": {"space": "cosine"}},
@@ -94,12 +103,15 @@ def build_index(chunks: list[DocumentChunk], index_dir: Path, fingerprint: str =
         batch_size = client.get_max_batch_size()
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start:start + batch_size]
+            # One record per chunk: ID, original text, vector, and metadata
+            # (filename, page number, section) used later to build citations.
             collection.add(
                 ids=[chunk.chunk_id for chunk in batch], documents=[chunk.text for chunk in batch],
                 embeddings=vectors[start:start + batch_size],
                 metadatas=[chunk.model_dump(exclude={"text", "chunk_id"}, exclude_none=True)
                            for chunk in batch])
-        # Keep the previous collection usable if embedding or storage fails.
+        # Keep the previous collection usable if embedding or storage fails:
+        # the active pointer is switched last, in one atomic file replace.
         temporary.write_text(json.dumps({"collection": name}), encoding="utf-8")
         temporary.replace(index_dir / "active_collection.json")
     except Exception:
@@ -132,6 +144,7 @@ def ensure_index(force: bool = False) -> dict[str, int | str]:
             # Reuse unchanged inputs to avoid repeated document embedding calls.
             load_index(index_dir)
             return {"state": "reused", "documents": len(files), "chunks": collection.count()}
+    # Rebuild: extract pages -> split into chunks -> save readable copies -> embed and store.
     pages = [page for pdf in files for page in load_pdf(pdf)]
     chunks = split_pages(pages)
     processed = settings.data_dir / "processed"

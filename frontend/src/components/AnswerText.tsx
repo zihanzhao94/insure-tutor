@@ -30,6 +30,7 @@ export default function AnswerText({ answer, citations, language, animate = fals
   }, [visible]);
   // Rejected/corrected responses must never leave an old preview on screen.
   const displayed = animate && answer.startsWith(visible) ? visible : answer;
+  // Split the text at [n] markers and render each marker as a citation button.
   return <><div ref={content} className="answer-text" aria-busy={displayed !== answer}>{citationParts(displayed, citations).map((part, index) => {
     if (part.type === "text") return part.text;
     const label = `${t.reference} ${part.number}: ${part.citation.filename}, ${t.page} ${part.citation.pdf_page}`;

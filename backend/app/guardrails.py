@@ -56,10 +56,14 @@ def message(kind: str, language: Language) -> str:
 
 def check_input(question: str, has_history: bool = False, *, rules_only: bool = False) -> str | None:
     """Block common override attempts; use keyword scope checks only in extractive mode."""
+    # Normalize to Simplified Chinese and lower case so one pattern covers every script.
     text = _simplifier.convert(question).lower()
+    # Always on: prompt-injection, secret-extraction and fabrication requests.
     injection = r"ignore.{0,30}(instructions|rules|prompt)|reveal.{0,30}(prompt|secret|key)|(?:invent|fabricate|fake).{0,30}(citation|policy|term)|忽略.{0,20}(指令|规则|提示)|(?:透露|显示|泄露).{0,15}(密钥|提示词)|(?:伪造|编造).{0,15}(条款|引用|保单)"
     if re.search(injection, text):
         return "blocked"
+    # In LLM mode the intent classifier decides scope. The keyword rules below
+    # are the fallback for extractive mode, which makes no model call.
     if not rules_only:
         return None
     advice = r"should i (?:buy|invest)|recommend.{0,30}(?:buy|invest)|我.{0,15}(?:该买|应该买|适合买)|(?:帮我|替我).{0,12}(?:决定|选择).{0,10}(?:保险|投保)"
@@ -122,6 +126,7 @@ def classify_question(question: str, history: list[dict[str, str]]) -> QuestionC
     This classifier does not decide whether the brochure contains an answer;
     retrieval and evidence validation make that decision later.
     """
+    # Send only the last four messages, each truncated, to keep this call cheap.
     context = [{"role": item["role"], "content": item["content"][:1200]}
                for item in history[-4:]]
     raw = generate_json([
@@ -160,15 +165,18 @@ def validate_answer(answer: GeneratedAnswer, evidence: list[DocumentChunk]) -> N
     for claim in answer.claims:
         quotes = []
         for ref in claim.evidence:
+            # Check 1: the cited ID must be one of the chunks retrieved for this question.
             chunk = sources.get(ref.chunk_id)
             if chunk is None:
                 raise ValueError("The answer contains an unverifiable source ID.")
+            # Check 2: the quote must appear in that chunk. The model sends only
+            # IDs, so the quote defaults to the whole chunk text.
             if not ref.quote:
                 ref.quote = chunk.text
             if len(ref.quote) < 12 or _canonical(ref.quote) not in _canonical(chunk.text):
                 raise ValueError("The answer contains an unverifiable citation or quote.")
             quotes.append(ref.quote)
-        # All numbers in the statement must appear in its own cited passages.
+        # Check 3: all numbers in the statement must appear in its own cited passages.
         supported = {number.replace(",", "") for number in _numbers(" ".join(quotes))}
         claimed = {number.replace(",", "") for number in _numbers(claim.text)}
         if not claimed <= supported:

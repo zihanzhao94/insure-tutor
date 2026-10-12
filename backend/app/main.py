@@ -98,4 +98,5 @@ def chat_stream(request: ChatRequest):
 
 
 def _sse(event, data):
+    """Format one Server-Sent Events frame: event name, JSON data line, then a blank line."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
