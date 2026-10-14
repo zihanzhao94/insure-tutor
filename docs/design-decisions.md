@@ -19,29 +19,39 @@ current implementation. The supplied 20-page PDF produces 53 chunks.
 
 ## 2. Architecture and data flow
 
+The system has two flows. Ingestion runs once, at startup or from the CLI, and
+builds the index. The question flow runs for every message and reads that index.
+
+**Ingestion (offline)**
+
 ```mermaid
 flowchart LR
-    subgraph Local[Local application and storage]
-        UI[React chat interface]
-        API[FastAPI: chat, RAG and guardrails]
-        History[(SQLite conversations)]
-        PDF[Source PDF]
-        Ingest[Ingestion: startup or CLI]
-        Store[(Persistent Chroma)]
-        UI <-->|Question, answer and citations| API
-        API <-->|Session messages| History
-        PDF -->|Page text| Ingest
-        Ingest -->|Chunks, vectors and page metadata| Store
-        API <-->|Cosine query and source records| Store
-    end
-    subgraph External[OpenAI API]
-        Embedding[text-embedding-3-small]
-        Chat[gpt-4.1-mini]
-    end
-    Ingest <-->|Chunk text / vectors| Embedding
-    API <-->|Question text / vector| Embedding
-    API <-->|Intent classification and grounded claims| Chat
+    PDF[Source PDF] --> Extract[Extract text per page]
+    Extract --> Split[Split each page into chunks]
+    Split --> Embed[Embed chunk text]
+    Embed --> Store[(Chroma: text, vectors, page metadata)]
 ```
+
+**Question flow (online)**
+
+```mermaid
+flowchart TD
+    UI[React chat interface] -->|Question and session ID| Guard[Step 1: Input rules and intent classification]
+    Guard -->|Advice, unrelated, blocked or unclear| Fixed[Predefined reply, no retrieval]
+    Guard -->|Brochure question| Retrieve[Step 2: Hybrid retrieval and page expansion]
+    Retrieve -->|Question and passages| Generate[Step 3: Answer generation]
+    Generate -->|Statements and chunk IDs| Validate[Step 4: Evidence and number validation]
+    Validate -->|Validated statements and citations| Reply[Step 5: Streamed reply to the interface]
+```
+
+| Step | Local storage | OpenAI call |
+|---|---|---|
+| Ingestion | Writes chunks, vectors and page metadata to Chroma | `text-embedding-3-small` on chunk text |
+| 1. Input rules and intent | Reads recent session messages from SQLite | `gpt-4.1-mini` to classify intent |
+| 2. Retrieval | Reads vectors and chunk records from Chroma | `text-embedding-3-small` on the question |
+| 3. Generation | None | `gpt-4.1-mini` with the question and retrieved passages |
+| 4. Validation | Uses the chunks retrieved in step 2 | None; one repair attempt repeats step 3 |
+| 5. Reply | Saves the final question and answer to SQLite | None |
 
 Docker Compose runs two services: the frontend and backend. Ingestion is a
 backend responsibility, invoked at startup or through the CLI; it is not a
