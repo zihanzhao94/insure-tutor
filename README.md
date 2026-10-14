@@ -196,7 +196,66 @@ adapter exists (`MODEL_PROVIDER=anthropic` with `EMBEDDING_BACKEND=local`, which
 downloads a local embedding model and needs a full index rebuild); it is not
 the tested configuration.
 
-## Verification
+## Evaluation results
+
+Recorded results for the supplied 20-page brochure are summarized below.
+Retrieval uses nine manually page-labeled questions, `text-embedding-3-small`
+and five primary chunks. Precision and recall score **distinct PDF pages among
+those chunks**; MRR uses the rank of the first relevant page after deduplication.
+These are page-level retrieval measurements, not answer-accuracy scores.
+
+### Chunk size and overlap (7 October 2026)
+
+Keyword weight is fixed at 0.12. Sizes and overlap are in characters.
+
+| Chunk size / overlap | Chunks | Page Precision@5 | Page Recall@5 | Page MRR |
+|---|---:|---:|---:|---:|
+| 600 / 0 | 72 | 0.528 | 1.000 | 0.944 |
+| 600 / 90 | 79 | 0.537 | 1.000 | 0.944 |
+| 1000 / 0 | 50 | 0.513 | 1.000 | **1.000** |
+| **1000 / 150 (current)** | 53 | **0.541** | 1.000 | **1.000** |
+| 1400 / 0 | 37 | 0.457 | 1.000 | 0.944 |
+| 1400 / 210 | 37 | 0.500 | 1.000 | 0.889 |
+
+The current setting had the highest page precision and tied-best MRR in this
+comparison. Removing overlap at size 1000 reduced mean expanded context by
+about 11%, with lower precision. This small set supports keeping the baseline;
+it does not establish a generally optimal chunk size.
+
+### Keyword weight (13 October 2026)
+
+Chunk settings stay at 1000/150. Selected rows from the weight comparison:
+
+| Keyword weight | Page Precision@5 | Page Recall@5 | Page MRR |
+|---|---:|---:|---:|
+| 0 (vector only) | 0.578 | 0.944 | 0.944 |
+| 0.05 | **0.596** | **1.000** | **1.000** |
+| **0.12 (current)** | 0.541 | **1.000** | **1.000** |
+| 1.0 | 0.448 | **1.000** | **1.000** |
+
+Adding keyword matches recovered a missed relevant page and corrected the first
+result on another question. Larger weights brought in more irrelevant pages.
+Weight 0.05 had higher precision than the current 0.12 with equal recall and
+MRR; a larger labeled set and end-to-end checks are needed before changing it.
+See the [full retrieval comparison](evals/retrieval_results.md) for all weights,
+expanded-context metrics and measurement limits.
+
+### Application checks (8 October 2026)
+
+| Check | Recorded result | What it checks |
+|---|---|---|
+| Backend tests with mocked models | 115 passed | Extraction, indexing, retrieval, guardrails, sessions and streaming |
+| Frontend tests | 17 passed | SSE parsing, cancellation, final-answer replacement and citation links |
+| Live end-to-end smoke cases | 27 / 28 passed in one full run | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
+
+The failed Simplified Chinese overview returned `insufficient_evidence`; it
+passed three subsequent reruns, so overview validation can still intermittently
+fall back to the fixed notice. Passing smoke checks does not prove semantic
+correctness: insurance conditions, translations and table relationships still
+need manual source review. See the [verification record](docs/verification.md)
+for dated runs and the [evaluation guide](evals/README.md) for case coverage.
+
+### Reproduce the checks
 
 ```sh
 .venv/bin/pip install -r backend/requirements-dev.txt
@@ -209,6 +268,7 @@ With the backend running (this calls the configured model API):
 ```sh
 .venv/bin/python evals/run_eval.py         # 28 end-to-end cases
 .venv/bin/python evals/retrieval_sweep.py  # chunk-setting comparison
+.venv/bin/python evals/lexical_weight_sweep.py  # keyword-weight comparison
 ```
 
 The end-to-end cases cover rates, charges and lapse, cooling-off, withdrawals,
