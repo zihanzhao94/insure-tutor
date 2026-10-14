@@ -177,6 +177,15 @@ semantic similarity = 1 - Chroma cosine distance
 combined score = semantic similarity + 0.12 * normalized keyword score
 ```
 
+The keyword weight was later compared from 0 to 1.0 on the same nine queries.
+Vector-only ranking missed one relevant page and ranked a wrong page first on
+another query; every non-zero weight fixed both. Page precision then fell from
+0.596 at 0.05 to 0.448 at 1.0, as chunks that only share words entered the top
+five. A weight of 0.05 scored slightly above the current 0.12 (0.596 against
+0.541, with equal recall and MRR), which is too small a difference on nine
+queries to justify a change. See
+[the keyword weight comparison](../evals/retrieval_results.md#keyword-weight-comparison).
+
 Retrieval requests distances for all 53 chunks before applying keyword weighting.
 It selects five primary chunks, then includes other chunks from the first three
 matched document/page pairs and Notes/disclosure pages in the selected documents.

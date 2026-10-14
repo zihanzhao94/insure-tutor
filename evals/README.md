@@ -43,3 +43,11 @@ include the application's page and disclosure expansion. The raw JSON report is
 written under `results/`; see `retrieval_results.md` for the comparison. These
 page labels are coarse: they do not grade which sentence within a page supports
 an answer. They also do not measure answer faithfulness or language quality.
+
+To compare keyword weights on the active index with the same queries, run:
+
+```sh
+.venv/bin/python evals/lexical_weight_sweep.py
+```
+
+It reuses the stored chunk vectors and embeds only the nine questions.

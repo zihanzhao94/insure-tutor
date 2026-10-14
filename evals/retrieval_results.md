@@ -26,11 +26,41 @@ to change it. The zero-overlap 1000-character setting sends about 11% less
 context, but its precision is lower; a larger evaluation set is needed before
 removing overlap. The 1400-character variants rank relevant pages less well.
 
+## Keyword weight comparison
+
+Measured on 2026-10-13 on the active 1000/150 index with the same nine
+questions, changing only the keyword weight in
+`score = cosine similarity + weight * normalized keyword score`.
+Reproduce with `.venv/bin/python evals/lexical_weight_sweep.py`.
+
+| Keyword weight | Page Precision@5 | Page Recall@5 | MRR |
+|---|---:|---:|---:|
+| 0 (vector only) | 0.578 | 0.944 | 0.944 |
+| 0.05 | **0.596** | **1.000** | **1.000** |
+| **0.12 (current)** | 0.541 | **1.000** | **1.000** |
+| 0.2 | 0.513 | **1.000** | **1.000** |
+| 0.3 | 0.502 | **1.000** | **1.000** |
+| 0.5 | 0.502 | **1.000** | **1.000** |
+| 1.0 | 0.448 | **1.000** | **1.000** |
+
+Vector-only ranking fails two questions that any keyword weight fixes: it
+misses page 14 for "停止缴付保费会怎样？", and for the minimum change in sum
+insured it ranks page 6 above the relevant page 17. Precision then falls as the
+weight grows, because chunks that share words without being relevant enter the
+top five. The weight matters more than a tie-breaker would: the mean cosine gap
+between the first and fifth chunk is about 0.08, smaller than the 0.12 maximum
+bonus. A weight of 0.05 scored slightly higher precision than the current 0.12
+with equal recall and MRR. That difference is about one extra page on a few
+questions, so 0.12 is kept until a larger labelled set and a rerun of the
+end-to-end cases support a change.
+
+## Limits of these measurements
+
 These are coarse page labels from one brochure. A relevant page can contain
-irrelevant chunks or fail to support the exact answer. All variants reaching
-full Recall@5 on nine questions is a ceiling effect, not proof of general
-retrieval quality. We did not compare other embedding models, `TOP_K`, lexical
-weights or multilingual query distributions. End-to-end status/phrase/page smoke
+irrelevant chunks or fail to support the exact answer. All chunk variants
+reaching full Recall@5 on nine questions is a ceiling effect, not proof of
+general retrieval quality. We did not compare other embedding models, `TOP_K`
+or multilingual query distributions. End-to-end status/phrase/page smoke
 checks live in [run_eval.py](run_eval.py); neither score is a semantic
 faithfulness or answer-relevance grade. Manual source review remains necessary,
 especially for exclusions, waiting periods and financial guarantees.
