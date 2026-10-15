@@ -23,8 +23,9 @@ docker compose up --build
 - API docs: <http://localhost:8000/docs>
 - Setup status: <http://localhost:8000/api/health>
 
-The first start extracts the PDF, builds embeddings and saves the index, so it
-needs API access; later starts reuse the saved index. If the page shows
+On the first start, the backend reads the PDF, splits its text into chunks,
+creates vectors and saves them in Chroma. Later starts reuse this index if the
+PDF and settings have not changed. If the page shows
 "Unable to connect" while the backend is still starting, refresh it. After
 changing `.env`, run `docker compose up -d --force-recreate backend`.
 
@@ -36,11 +37,10 @@ Try:
 - "What is the minimum increase or decrease in sum insured?"
 - "What is the guaranteed account value?" → "And when does it apply?"
 
-The language selector sets the interface, the fixed notices and the answer
-language. An explicit request in a question to answer in another language
-takes precedence.
+The language selector controls the interface and replies. You can override the
+answer language by asking for another language in your question.
 
-**Data flow.** The API key stays on the backend. PDFs, extracted text, vectors
+**Where data goes.** The API key stays on the backend. PDFs, extracted text, vectors
 and conversations are stored locally. OpenAI receives document text during
 embedding, and questions with retrieved passages during answering.
 
@@ -64,8 +64,8 @@ npm ci
 npm run dev
 ```
 
-Vite proxies `/api` to port 8000. Exported environment variables take
-precedence over `.env`.
+Vite forwards `/api` requests to the backend on port 8000. Environment variables
+already set in the terminal override values in `.env`.
 
 To rebuild the index manually:
 
@@ -74,39 +74,61 @@ PYTHONPATH=backend .venv/bin/python -m app.rag.ingest --force
 # Docker: docker compose exec backend python -m app.rag.ingest --force
 ```
 
-Ingestion writes a new Chroma collection and switches to it only after every
-write succeeds, so a failed build leaves the previous index active. The index
-is rebuilt automatically when the PDFs, chunk settings or embedding settings
-change; use `--force` after changing extraction or splitting code.
+Rebuilding creates a new Chroma collection. The app switches to it only after
+all chunks are stored, so a failed rebuild keeps the old index available.
+At startup, the backend rebuilds if the PDFs, chunk settings or embedding
+settings have changed. Use `--force` after changing extraction or splitting code.
 
 To use other source files, replace the PDFs in `data/raw/` and restart the
-backend. The source list in the interface follows the active index, but the
-answer prompts and the known-conflict check are tailored to this brochure, so
-another product needs those reviewed and new evaluation cases.
+backend. The interface lists documents from the active index. Some answer
+instructions and the bilingual amount-conflict check are specific to this
+brochure; review them and add test questions before using another product.
 
 ## Architecture
 
+**1. Prepare the documents** — at startup, build or reuse the saved index.
+
 ```mermaid
-flowchart LR
-    PDF[Local PDF] -->|Extract pages and split chunks| Ingest[Offline ingestion]
-    Ingest -->|Embed text via OpenAI| Store[(Local Chroma vector store)]
-    UI[React chat] -->|Question and session ID| API[FastAPI / chat]
-    API -->|Misuse rules and AI intent classification| Intent[Fixed category routing]
-    Intent -->|Question or overview| RAG[RAG query]
-    Intent -->|Advice, unrelated, blocked or unclear| API
-    History[(Local conversation SQLite)] <--> API
-    RAG <-->|Cosine query and chunk metadata| Store
-    RAG -->|Question and retrieved passages| GPT[GPT API]
-    GPT -->|Streamed JSON claims and source IDs| Check[Evidence and number validation]
-    Check -->|Validated claims and PDF page links| API
-    API -->|SSE updates and authoritative final answer| UI
+%%{init: {"themeVariables": {"fontSize": "20px"}}}%%
+flowchart TD
+    PDF[Local PDF] --> Extract[Extract text per page]
+    Extract --> Split[Split into chunks]
+    Split --> Embed[Generate text embeddings]
+    Embed --> Store[(Chroma: vectors, text and page metadata)]
 ```
+
+**2. Answer a question** — runs for each chat message. The model returns
+statements with source IDs; the code calls each statement a **claim**.
+
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "20px"}}}%%
+flowchart TD
+    UI[React chat] --> API[FastAPI: question and session ID]
+    History[(SQLite history)] --> API
+    API --> Guard[Check rules and question type]
+    Guard -->|Document question| RAG[Find passages and add conditions]
+    Guard -->|Refuse or clarify| Notice[Fixed reply]
+    Store[(Chroma index)] --> RAG
+    RAG --> GPT[LLM: statements and source IDs]
+    GPT --> Check[Check source IDs and numbers]
+    Check --> Reply[SSE: send checked statements]
+    Notice --> Reply
+```
+
+The backend checks each completed statement before sending it to the frontend
+through SSE (Server-Sent Events). The frontend shows each update as it arrives,
+then replaces the preview with the final answer. The question and final answer
+are saved in SQLite; clarification replies are also saved. If answer checks
+fail, the model gets one chance to correct its output. If that also fails,
+the user receives an insufficient-evidence reply.
+
+**Code structure**
 
 ```text
 backend/app/
 ├── main.py          API endpoints, PDF serving and startup indexing
-├── chat.py          Scope checks, follow-up context and conversation orchestration
-├── guardrails.py    Input rules, AI intent classification and evidence validation
+├── chat.py          Loads history and runs the question-to-answer flow
+├── guardrails.py    Checks question type, misuse, sources and numbers
 ├── model_client.py  Provider calls and embeddings
 ├── storage.py       SQLite conversation history
 ├── config.py        Environment settings
@@ -120,47 +142,34 @@ evals/               End-to-end cases, retrieval parameter sweep and results
 data/raw/            Source PDF (index, extracted text and sessions are generated and ignored)
 ```
 
-In this code a **claim** is one statement in the tutor's answer, not an
-insurance claim (理赔申请). The model proposes the wording and the IDs of the
-retrieved chunks that support it; the backend checks them and renders the
-statement with numbered PDF references.
+Each claim contains answer text and 1–4 source chunk IDs selected by the model.
+The backend builds the numbered references and PDF links from those sources.
+Here, "claim" means an answer statement, not an insurance claim (理赔申请).
 
 An editable diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 
 ## Key design decisions
 
-The reasoning, alternatives and tradeoffs are in
-[docs/design-decisions.md](docs/design-decisions.md). In brief:
+- **Keep page numbers.** Chunks stay within one PDF page so users can open the
+  exact source page for an answer.
+- **Search by meaning and keywords.** Use both scores to rank chunks, then add
+  text from matching pages and disclosures so benefit conditions are included.
+- **Check before showing.** Require a source ID for each answer statement.
+  Check that the ID was retrieved and its passage contains the stated numbers.
+  This catches fake references and unsupported numbers, but can still miss
+  a wrong interpretation of the text.
+- **Decide which questions to answer.** Block common attempts to override rules
+  or invent facts, refuse personal advice and unrelated topics, and ask for
+  clarification when needed. For document questions, retrieve first; if evidence
+  is insufficient, say so.
+- **Store documents and chat separately.** Chroma stores vectors, text and page
+  details; SQLite stores full chat messages. Read the last three saved turns by
+  default to understand follow-ups, but use newly retrieved passages for facts.
 
-- **Page-preserving chunks.** `pypdf` extracts each page and a recursive
-  splitter cuts it into 1,000-character chunks with 150 overlap. Chunks never
-  cross a page, so every citation carries an exact PDF file page.
-- **Local Chroma store.** One embedded store holds text, vectors and page
-  metadata without another service. The 20-page brochure yields 53 chunks.
-- **Hybrid retrieval with supporting pages.** Cosine similarity plus a small
-  keyword and Chinese-bigram score picks the top five chunks. The rest of the
-  pages holding the top three, plus the Notes and disclosure pages, are then
-  added, up to 17,000 characters, so footnotes travel with the benefits they
-  qualify.
-- **Server-owned citations.** The model returns statements and chunk IDs in a
-  strict JSON schema. The backend supplies the passages, page links and
-  numbering, and rejects unknown chunk IDs and any number that is absent from
-  the cited passages. One repair attempt is allowed; after that the user gets
-  an insufficient-evidence notice.
-- **Validated streaming.** The backend buffers the model's JSON and sends each
-  statement to the interface only after it passes those checks. The final full
-  response replaces the preview and is the only text saved.
-- **Layered guardrails.** Rules block common override and fabrication attempts.
-  A short model call then classifies intent: brochure questions go to
-  retrieval, personal advice and unrelated topics are refused, and unclear
-  input gets a clarifying question. Whether the brochure contains an answer is
-  decided after retrieval, not by the classifier.
-- **Conversation memory.** Each session keeps its history in local SQLite. The
-  last `MEMORY_TURNS` turns go to answer generation and short follow-ups reuse
-  recent questions for retrieval, but every fact must still cite freshly
-  retrieved passages.
+See [design decisions](docs/design-decisions.md) for alternatives, parameters
+and tradeoffs.
 
-## Source-specific cautions
+## Important details in this brochure
 
 The brochure is general reference, **not the full policy contract**.
 
@@ -198,11 +207,18 @@ the tested configuration.
 
 ## Evaluation results
 
-Recorded results for the supplied 20-page brochure are summarized below.
-Retrieval uses nine manually page-labeled questions, `text-embedding-3-small`
-and five primary chunks. Precision and recall score **distinct PDF pages among
-those chunks**; MRR uses the rank of the first relevant page after deduplication.
-These are page-level retrieval measurements, not answer-accuracy scores.
+These recorded results use the supplied 20-page brochure and
+`text-embedding-3-small`. For nine test questions, relevant PDF pages were
+manually labeled. Each query retrieves five primary chunks, then repeated page
+numbers are removed before scoring:
+
+- **Page Precision@5:** relevant retrieved pages / all retrieved pages.
+- **Page Recall@5:** relevant retrieved pages / all labeled relevant pages.
+- **Page MRR:** average of 1 / rank of the first relevant page; higher means
+  relevant pages appear earlier.
+
+These scores measure whether retrieval finds the right pages. They do not
+measure whether the final answer is correct.
 
 ### Chunk size and overlap (7 October 2026)
 
@@ -217,10 +233,10 @@ Keyword weight is fixed at 0.12. Sizes and overlap are in characters.
 | 1400 / 0 | 37 | 0.457 | 1.000 | 0.944 |
 | 1400 / 210 | 37 | 0.500 | 1.000 | 0.889 |
 
-The current setting had the highest page precision and tied-best MRR in this
-comparison. Removing overlap at size 1000 reduced mean expanded context by
-about 11%, with lower precision. This small set supports keeping the baseline;
-it does not establish a generally optimal chunk size.
+The current setting had the highest page precision and shared the best MRR.
+Using 1000-character chunks without overlap sent about 11% less source text to
+the model, but had lower precision. We kept 1000/150 based on this small test;
+more questions are needed to judge whether it works well more broadly.
 
 ### Keyword weight (13 October 2026)
 
@@ -233,12 +249,13 @@ Chunk settings stay at 1000/150. Selected rows from the weight comparison:
 | **0.12 (current)** | 0.541 | **1.000** | **1.000** |
 | 1.0 | 0.448 | **1.000** | **1.000** |
 
-Adding keyword matches recovered a missed relevant page and corrected the first
-result on another question. Larger weights brought in more irrelevant pages.
-Weight 0.05 had higher precision than the current 0.12 with equal recall and
-MRR; a larger labeled set and end-to-end checks are needed before changing it.
-See the [full retrieval comparison](evals/retrieval_results.md) for all weights,
-expanded-context metrics and measurement limits.
+Keyword scoring found a page missed by vector-only search and put a relevant
+page first for another question. Giving keywords too much weight brought in
+more irrelevant pages. Weight 0.05 scored better than the current 0.12 on
+precision, with the same recall and MRR. Before changing it, we need more labeled
+questions and checks of the resulting answers.
+See the [full retrieval comparison](evals/retrieval_results.md) for all weights
+and the amount and relevance of source text sent to the model.
 
 ### Application checks (8 October 2026)
 
@@ -248,12 +265,12 @@ expanded-context metrics and measurement limits.
 | Frontend tests | 17 passed | SSE parsing, cancellation, final-answer replacement and citation links |
 | Live end-to-end smoke cases | 27 / 28 passed in one full run | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
 
-The failed Simplified Chinese overview returned `insufficient_evidence`; it
-passed three subsequent reruns, so overview validation can still intermittently
-fall back to the fixed notice. Passing smoke checks does not prove semantic
-correctness: insurance conditions, translations and table relationships still
-need manual source review. See the [verification record](docs/verification.md)
-for dated runs and the [evaluation guide](evals/README.md) for case coverage.
+One Simplified Chinese overview returned `insufficient_evidence`. It passed
+three reruns, but this shows the same question can sometimes fall back to a
+fixed reply. These smoke checks verify expected behavior; a passing answer can
+still misinterpret a condition, translation or table. Those details need manual
+comparison with the PDF. See the [verification record](docs/verification.md)
+for dated runs and the [evaluation guide](evals/README.md) for test cases.
 
 ### Reproduce the checks
 
@@ -271,20 +288,18 @@ With the backend running (this calls the configured model API):
 .venv/bin/python evals/lexical_weight_sweep.py  # keyword-weight comparison
 ```
 
-The end-to-end cases cover rates, charges and lapse, cooling-off, withdrawals,
-illness conditions, follow-ups, three languages, missing evidence, the
-bilingual conflict and misuse. They check status, cited pages and selected
-phrases, not full factual correctness. See [evals/README.md](evals/README.md),
-[the retrieval results](evals/retrieval_results.md) and the
-[recorded checks](docs/verification.md).
+The end-to-end cases include policy conditions, follow-ups, three languages,
+missing information, conflicting amounts and misuse. The scripts save detailed
+reports locally under `evals/results/`.
 
 ## Limits
 
-- Text PDFs only; there is no OCR, and table extraction can lose layout.
-- Citations open the PDF at a page; paragraph highlighting is not implemented.
-- The evidence checks confirm that a cited passage exists and contains the
-  stated numbers. They do not prove that every paraphrase is correct.
-- Retrieval scores every chunk, which suits one brochure but not a large
-  collection.
-- There is no authentication, rate limiting or session ownership check, and
-  the frontend container runs the Vite development server. Run it locally.
+- Only PDFs with selectable text are supported. There is no OCR for scanned
+  pages, and extracting tables can lose row and column relationships.
+- References open the source page, without highlighting the exact paragraph.
+- Source and number checks can still miss a wrong explanation of a condition.
+- All chunks are scored on each query. A larger document collection needs a
+  more efficient search approach.
+- Session IDs are not user authentication. There are no session ownership checks
+  or rate limits, and Docker runs the frontend through Vite's development server.
+  This setup is intended for local use.
