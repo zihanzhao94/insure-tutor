@@ -265,6 +265,17 @@ and the amount and relevance of source text sent to the model.
 | Frontend tests | 17 passed | SSE parsing, cancellation, final-answer replacement and citation links |
 | Live end-to-end smoke cases | 27 / 28 passed in one full run | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
 
+One concrete example from each type:
+
+| Type | What the test supplies | What must happen to pass |
+|---|---|---|
+| [Backend](backend/tests/test_guardrails.py) | A test passage says "21 days"; a deliberately wrong answer says "99 days" and cites that passage. | The answer checker raises an error because 99 is absent from the cited text. |
+| [Frontend](frontend/tests/frontend.test.mjs) | A simulated server sends a Chinese answer and its final result one byte at a time. | The stream reader reconstructs the original answer without breaking Chinese characters. |
+| [Real API](evals/questions.jsonl) | Ask "Is the 4% interest rate guaranteed?" through the running backend. | Status is `answered`, the answer contains `4%` and `not guaranteed`, and at least one citation points to PDF page 8 or 16. |
+
+The first two examples use controlled test data without calling a real model.
+The third calls the real model API and checks its actual response.
+
 One Simplified Chinese overview returned `insufficient_evidence`. It passed
 three reruns, but this shows the same question can sometimes fall back to a
 fixed reply. These smoke checks verify expected behavior; a passing answer can
