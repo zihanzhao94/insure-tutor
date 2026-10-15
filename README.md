@@ -111,16 +111,9 @@ flowchart TD
     Store[(Chroma index)] --> RAG
     RAG --> GPT[LLM: statements and source IDs]
     GPT --> Check[Check source IDs and numbers]
-    Check --> Reply[SSE: send checked statements]
+    Check --> Reply[Stream checked statements]
     Notice --> Reply
 ```
-
-The backend checks each completed statement before sending it to the frontend
-through SSE (Server-Sent Events). The frontend shows each update as it arrives,
-then replaces the preview with the final answer. The question and final answer
-are saved in SQLite; clarification replies are also saved. If answer checks
-fail, the model gets one chance to correct its output. If that also fails,
-the user receives an insufficient-evidence reply.
 
 **Code structure**
 
@@ -142,47 +135,25 @@ evals/               End-to-end cases, retrieval parameter sweep and results
 data/raw/            Source PDF (index, extracted text and sessions are generated and ignored)
 ```
 
-Each claim contains answer text and 1–4 source chunk IDs selected by the model.
-The backend builds the numbered references and PDF links from those sources.
-Here, "claim" means an answer statement, not an insurance claim (理赔申请).
-
 An editable diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 
 ## Key design decisions
 
-- **Keep page numbers.** Chunks stay within one PDF page so users can open the
-  exact source page for an answer.
-- **Search by meaning and keywords.** Use both scores to rank chunks, then add
-  text from matching pages and disclosures so benefit conditions are included.
-- **Check before showing.** Require a source ID for each answer statement.
-  Check that the ID was retrieved and its passage contains the stated numbers.
-  This catches fake references and unsupported numbers, but can still miss
-  a wrong interpretation of the text.
-- **Decide which questions to answer.** Block common attempts to override rules
-  or invent facts, refuse personal advice and unrelated topics, and ask for
-  clarification when needed. For document questions, retrieve first; if evidence
-  is insufficient, say so.
-- **Store documents and chat separately.** Chroma stores vectors, text and page
-  details; SQLite stores full chat messages. Read the last three saved turns by
-  default to understand follow-ups, but use newly retrieved passages for facts.
+- **Link answers to pages.** Keep each chunk on one PDF page so citations open
+  the right page.
+- **Search in two ways.** Combine meaning and keyword matches, then include
+  related conditions from the PDF.
+- **Check cited facts.** Check source IDs and numbers before showing an answer.
+  This cannot confirm that the answer interprets the text correctly.
+- **Handle unsuitable questions.** Ask when a question is unclear. Refuse
+  personal advice, unrelated requests and attempts to bypass the rules. Say
+  when the PDF does not provide enough evidence.
+- **Keep chat and documents separate.** Chroma stores searchable PDF chunks;
+  SQLite saves questions and final answers. Use the last three turns to
+  understand follow-up questions.
 
 See [design decisions](docs/design-decisions.md) for alternatives, parameters
 and tradeoffs.
-
-## Important details in this brochure
-
-The brochure is general reference, **not the full policy contract**.
-
-- PDF page 8 quotes assumed rates as of **January 2022**; the tutor does not
-  present them as current or guaranteed.
-- The 2.5% condition concerns accumulated account value after at least 15
-  years in force, not a guaranteed annual credited rate.
-- On PDF page 17 the minimum increase/decrease in sum insured reads
-  USD 5,000 / HKD 40,000 / MOP 400,000 in Chinese and
-  USD 5,000 / HKD 400,000 / MOP 40,000 in English. The tutor reports the
-  discrepancy instead of choosing one.
-- The brochure has no claim document list or processing time, so the tutor
-  answers those questions with insufficient evidence.
 
 ## Configuration
 
@@ -238,32 +209,27 @@ Using 1000-character chunks without overlap sent about 11% less source text to
 the model, but had lower precision. We kept 1000/150 based on this small test;
 more questions are needed to judge whether it works well more broadly.
 
-### Keyword weight (13 October 2026)
+### Keyword weight
 
-Chunk settings stay at 1000/150. Selected rows from the weight comparison:
+Selected results from nine page-labeled questions:
 
 | Keyword weight | Page Precision@5 | Page Recall@5 | Page MRR |
 |---|---:|---:|---:|
 | 0 (vector only) | 0.578 | 0.944 | 0.944 |
-| 0.05 | **0.596** | **1.000** | **1.000** |
 | **0.12 (current)** | 0.541 | **1.000** | **1.000** |
 | 1.0 | 0.448 | **1.000** | **1.000** |
 
-Keyword scoring found a page missed by vector-only search and put a relevant
-page first for another question. Giving keywords too much weight brought in
-more irrelevant pages. Weight 0.05 scored better than the current 0.12 on
-precision, with the same recall and MRR. Before changing it, we need more labeled
-questions and checks of the resulting answers.
-See the [full retrieval comparison](evals/retrieval_results.md) for all weights
-and the amount and relevance of source text sent to the model.
+Keyword scoring recovered a page missed by vector-only search; too much keyword
+weight added irrelevant pages. We kept 0.12 after checking live answers. See
+the [full comparison](evals/retrieval_results.md).
 
-### Application checks (8 October 2026)
+### Application checks
 
 | Check | Recorded result | What it checks |
 |---|---|---|
-| Backend tests with mocked models | 115 passed | Extraction, indexing, retrieval, guardrails, sessions and streaming |
-| Frontend tests | 17 passed | SSE parsing, cancellation, final-answer replacement and citation links |
-| Live end-to-end smoke cases | 27 / 28 passed in one full run | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
+| Backend tests with mocked models | 115 passed (15 October 2026) | Extraction, indexing, retrieval, guardrails, sessions and streaming |
+| Frontend tests | 17 passed (8 October 2026) | SSE parsing, cancellation, final-answer replacement and citation links |
+| Live end-to-end smoke cases | 28 / 28 passed in one full run (15 October 2026) | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
 
 One concrete example from each type:
 
@@ -273,15 +239,8 @@ One concrete example from each type:
 | [Frontend](frontend/tests/frontend.test.mjs) | A simulated server sends a Chinese answer and its final result one byte at a time. | The stream reader reconstructs the original answer without breaking Chinese characters. |
 | [Real API](evals/questions.jsonl) | Ask "Is the 4% interest rate guaranteed?" through the running backend. | Status is `answered`, the answer contains `4%` and `not guaranteed`, and at least one citation points to PDF page 8 or 16. |
 
-The first two examples use controlled test data without calling a real model.
-The third calls the real model API and checks its actual response.
-
-One Simplified Chinese overview returned `insufficient_evidence`. It passed
-three reruns, but this shows the same question can sometimes fall back to a
-fixed reply. These smoke checks verify expected behavior; a passing answer can
-still misinterpret a condition, translation or table. Those details need manual
-comparison with the PDF. See the [verification record](docs/verification.md)
-for dated runs and the [evaluation guide](evals/README.md) for test cases.
+An earlier Simplified Chinese overview returned `insufficient_evidence`, then
+passed three reruns. See the [verification record](docs/verification.md).
 
 ### Reproduce the checks
 
@@ -305,12 +264,6 @@ reports locally under `evals/results/`.
 
 ## Limits
 
-- Only PDFs with selectable text are supported. There is no OCR for scanned
-  pages, and extracting tables can lose row and column relationships.
-- References open the source page, without highlighting the exact paragraph.
-- Source and number checks can still miss a wrong explanation of a condition.
-- All chunks are scored on each query. A larger document collection needs a
-  more efficient search approach.
-- Session IDs are not user authentication. There are no session ownership checks
-  or rate limits, and Docker runs the frontend through Vite's development server.
-  This setup is intended for local use.
+- Scanned PDFs are not supported, and table text may be read in the wrong order.
+- Citations and number checks cannot confirm that the answer explains a policy condition correctly.
+- This demo is designed for a small document collection and local use. It does not include user login or request limits.

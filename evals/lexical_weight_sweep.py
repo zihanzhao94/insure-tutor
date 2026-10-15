@@ -17,7 +17,7 @@ from app.rag.query import _terms, load_index  # noqa: E402
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--weights", nargs="+", type=float, default=[0, 0.05, 0.12, 0.2, 0.3, 0.5, 1.0])
+    parser.add_argument("--weights", nargs="+", type=float, default=[0, 0.04, 0.05, 0.12, 0.2, 0.3, 0.5, 1.0])
     args = parser.parse_args()
     settings = get_settings()
     index = load_index(settings.data_dir / "index")

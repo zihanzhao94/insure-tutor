@@ -179,12 +179,14 @@ combined score = semantic similarity + 0.12 * normalized keyword score
 
 The keyword weight was later compared from 0 to 1.0 on the same nine queries.
 Vector-only ranking missed one relevant page and ranked a wrong page first on
-another query; every non-zero weight fixed both. Page precision then fell from
-0.596 at 0.05 to 0.448 at 1.0, as chunks that only share words entered the top
-five. A weight of 0.05 scored slightly above the current 0.12 (0.596 against
-0.541, with equal recall and MRR), which is too small a difference on nine
-queries to justify a change. See
-[the keyword weight comparison](../evals/retrieval_results.md#keyword-weight-comparison).
+another query; the tested weights from 0.04 upward fixed both. Page precision
+then fell from 0.596 at 0.05 to 0.448 at 1.0, as chunks that only share words
+entered the top five. Weights 0.04 and 0.05 tied above the current 0.12 on page precision
+(0.596 against 0.541), with equal recall and MRR. In one 28-case live run per
+weight, 0.04 passed 26, 0.05 passed 27 and 0.12 passed 28. The lower-weight
+failures were overview answers that returned insufficient evidence. Because
+the model output varies and these are small smoke checks, 0.12 remains in use.
+See [the keyword weight comparison](../evals/retrieval_results.md#keyword-weight-comparison).
 
 Retrieval requests distances for all 53 chunks before applying keyword weighting.
 It selects five primary chunks, then includes other chunks from the first three

@@ -29,13 +29,14 @@ removing overlap. The 1400-character variants rank relevant pages less well.
 ## Keyword weight comparison
 
 Measured on 2026-10-13 on the active 1000/150 index with the same nine
-questions, changing only the keyword weight in
-`score = cosine similarity + weight * normalized keyword score`.
+questions; the 0.04 row was added on 2026-10-15. Only the keyword weight
+changed in `score = cosine similarity + weight * normalized keyword score`.
 Reproduce with `.venv/bin/python evals/lexical_weight_sweep.py`.
 
 | Keyword weight | Page Precision@5 | Page Recall@5 | MRR |
 |---|---:|---:|---:|
 | 0 (vector only) | 0.578 | 0.944 | 0.944 |
+| 0.04 | **0.596** | **1.000** | **1.000** |
 | 0.05 | **0.596** | **1.000** | **1.000** |
 | **0.12 (current)** | 0.541 | **1.000** | **1.000** |
 | 0.2 | 0.513 | **1.000** | **1.000** |
@@ -43,16 +44,22 @@ Reproduce with `.venv/bin/python evals/lexical_weight_sweep.py`.
 | 0.5 | 0.502 | **1.000** | **1.000** |
 | 1.0 | 0.448 | **1.000** | **1.000** |
 
-Vector-only ranking fails two questions that any keyword weight fixes: it
+Vector-only ranking fails two questions that weights of 0.04 and above fix: it
 misses page 14 for "停止缴付保费会怎样？", and for the minimum change in sum
 insured it ranks page 6 above the relevant page 17. Precision then falls as the
 weight grows, because chunks that share words without being relevant enter the
 top five. The weight matters more than a tie-breaker would: the mean cosine gap
 between the first and fifth chunk is about 0.08, smaller than the 0.12 maximum
-bonus. A weight of 0.05 scored slightly higher precision than the current 0.12
-with equal recall and MRR. That difference is about one extra page on a few
-questions, so 0.12 is kept until a larger labelled set and a rerun of the
-end-to-end cases support a change.
+bonus. Weights 0.04 and 0.05 tied for the best page precision on these nine
+questions, with the same recall and MRR as 0.12.
+
+On 2026-10-15, one live run of the 28 end-to-end cases per weight passed 26/28
+at 0.04, 27/28 at 0.05, and 28/28 at the current 0.12. The failures at 0.04
+were the English and Traditional Chinese overviews; at 0.05, the English
+overview. Each returned `insufficient_evidence`. Three further English overview
+tries passed 0/3 at 0.05 and 2/3 at 0.12. Model output varies, so these small
+samples do not prove that 0.12 is generally better. It remains in use pending
+more labeled questions and repeated answer-quality checks.
 
 ## Limits of these measurements
 
