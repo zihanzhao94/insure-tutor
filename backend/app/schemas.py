@@ -6,21 +6,23 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Language = Literal["en", "zh-Hans", "zh-Hant"]
 QuestionCategory = Literal["document_qa", "document_overview", "personal_advice", "out_of_scope", "blocked", "uncertain"]
+QuestionTopic = Literal["general", "investment"]
 MAX_CLAIMS = 6
 
 
 class QuestionIntent(BaseModel):
-    """A routing label, not an answer or proof that the PDF contains evidence."""
+    """Routing labels, not an answer or proof that the PDF contains evidence."""
 
     model_config = ConfigDict(extra="forbid")
     category: QuestionCategory
+    topic: QuestionTopic
 
 
 INTENT_JSON_SCHEMA = {
-    "type": "object", "additionalProperties": False, "required": ["category"],
+    "type": "object", "additionalProperties": False, "required": ["category", "topic"],
     "properties": {"category": {"type": "string", "enum": [
         "document_qa", "document_overview", "personal_advice", "out_of_scope", "blocked", "uncertain"
-    ]}},
+    ]}, "topic": {"type": "string", "enum": ["general", "investment"]}},
 }
 
 

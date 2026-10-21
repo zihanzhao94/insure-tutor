@@ -41,12 +41,18 @@ def main():
                 missing = [point for point in case["expected_points"]
                            if not any(value.lower() in body["answer"].lower()
                                       for value in (point if isinstance(point, list) else [point]))]
+                forbidden = [point for point in case.get("forbidden_points", [])
+                             if point.lower() in body["answer"].lower()]
                 checks = {"status": body["status"] in case["statuses"],
                           "source_page": not case["source_pages"] or bool(set(pages) & set(case["source_pages"])),
+                          "source_page_groups": all(set(pages) & set(group)
+                                                    for group in case.get("source_page_groups", [])),
                           "expected_points": not missing,
+                          "forbidden_points": not forbidden,
                           "refusal_has_no_citations": body["status"] not in {"blocked", "out_of_scope", "insufficient_evidence", "clarification_required"} or not body["citations"]}
                 result = {"id": case["id"], "passed": all(checks.values()), "checks": checks,
-                          "source_pages": pages, "missing_points": missing, "response": body}
+                          "source_pages": pages, "missing_points": missing,
+                          "forbidden_points": forbidden, "response": body}
             except (httpx.HTTPError, ValueError, KeyError) as error:
                 result = {"id": case["id"], "passed": False, "error": str(error)}
             results.append(result)

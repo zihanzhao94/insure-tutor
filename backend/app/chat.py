@@ -41,6 +41,7 @@ def _chat_events(request, *, streaming):
     # Step 1: rule-based input check (prompt injection and similar).
     rejection = check_input(question, has_history=bool(history), rules_only=settings.chat_mode == "extractive")
     category = "document_qa"
+    topic = "general"
     # Regex shortcuts for one-word topics and very broad questions; a match skips the classifier.
     resolved = _short_topic_request(question)
     implicit = _implicit_brochure_request(question)
@@ -53,12 +54,13 @@ def _chat_events(request, *, streaming):
         # Step 2: decide the route, by shortcut or by one short model call.
         if resolved:
             category = resolved[1]
-        elif implicit:
+        elif implicit or key_points:
             # In this document tutor, this broad phrasing refers to the supplied
-            # brochure; it asks for neither a market comparison nor personal advice.
+            # brochure; it asks for neither a market comparison nor a personal decision.
             category = "document_overview"
         else:
-            category = classify_question(question, history)
+            intent = classify_question(question, history)
+            category, topic = intent.category, intent.topic
             if category == "uncertain" and key_points:
                 category = "document_overview"
         # Categories that must be refused map to a fixed reply; the rest continue to RAG.
@@ -87,8 +89,12 @@ def _chat_events(request, *, streaming):
         options = {"focus": implicit[1]}
     elif key_points:
         options = {"key_points": True}
+    elif topic == "investment" and category == "document_overview":
+        options = {"focus": "investment"}
     else:
         options = {"overview": True} if category == "document_overview" else {}
+    if topic == "investment":
+        options["topic"] = "investment"
     if history:
         options.update(current_question=effective_question, conversation=history)
     elif implicit:
@@ -128,6 +134,10 @@ def _retrieval_query(question: str, history: list[dict[str, str]]) -> str:
 
 def _is_brief_overview_request(question: str) -> bool:
     """Recognize a short request for key points, including a common typo."""
+    text = question.strip()
+    if re.fullmatch(r"(?:(?:please|can you)\s+)?introduce\s+(?:this|the)\s+"
+                    r"(?:policy|plan|brochure)[?.!]?", text, re.I):
+        return True
     return bool(re.fullmatch(
         r"(?:what(?:'s| is)|tell me)\s+(?:the\s+)?(?:most\s+import(?:ant)?|main|key)\s+"
         r"(?:part|points?|terms?|features?)(?:\s+of\s+(?:this|the)\s+(?:brochure|document|plan))?[?.!]?",
@@ -165,7 +175,7 @@ def _short_topic_request(question: str) -> tuple[str, str] | None:
 
 
 def _implicit_brochure_request(question: str) -> tuple[str, str] | None:
-    """Scope broad "what should I watch for" questions without weakening advice or misuse rules."""
+    """Resolve broad brochure questions about cautions without model classification."""
     normalized = re.sub(r"[\s?？。！!]+$", "", localize(question, "zh-Hans").strip())
     if re.fullmatch(
             r"(?:(?:这份|这个|该)(?:文件|文档|宣传册|保单|保险计划))?"

@@ -44,6 +44,41 @@ def test_supplied_pdf_loads_all_pages_and_keeps_source_metadata():
     assert all(amount in pages[16].text for amount in ("5,000", "40,000", "400,000"))
 
 
+def test_minimum_sum_insured_table_keeps_age_plan_and_territory_together():
+    source = next((ROOT / "data/raw").glob("*.pdf"))
+    page = ingest.load_pdf(source)[16]
+    table = ingest.split_pages([page])[0]
+    assert table.pdf_page == 17
+    assert len(table.text) <= 1000
+    assert "Plan / territory | Issue age <45 | Issue age ≥45" in table.text
+    assert "FP80/100/130, Hong Kong Policies | US$30,000" in table.text
+    assert "HK$240,000" in table.text and "US$15,000" in table.text
+    assert "FP80/100/130, Macau Policies | US$25,000" in table.text
+    assert "MOP200,000 / HK$200,000" in table.text
+    assert "FP180/280 | US$15,000" in table.text and "US$8,000" in table.text
+    assert "Others | US$5,000" in table.text
+    assert "same minimum for both age groups" in table.text
+    assert "< Age 45 歲 ≥ Age 45 歲" not in page.text
+    answer = GeneratedAnswer.model_validate({"status": "answered", "claims": [{
+        "text": "The minimum varies by plan and issue age.", "evidence": [table.chunk_id]}]})
+    _, citations, _ = query._render_answer(answer, [table], "en")
+    assert "FP80/100/130" in citations[0].excerpt
+    assert "Others | US$5,000" in citations[0].excerpt
+
+
+def test_table_rows_stay_whole_when_table_exceeds_chunk_size():
+    header = "Minimum Sum Insured\nPlan | Age <45 | Age ≥45"
+    rows = [f"Plan {number} | USD {number},000 and conditions | USD {number + 1},000 and conditions"
+            for number in range(1, 5)]
+    page = DocumentPage(document_id="plan", filename="plan.pdf", pdf_page=3,
+                        text=f"[TABLE]\n{header}\n" + "\n".join(rows) + "\n[/TABLE]")
+    chunks = ingest.split_pages([page], chunk_size=130, chunk_overlap=20)
+    assert len(chunks) > 1
+    assert all(chunk.text.startswith(header) for chunk in chunks)
+    assert all(len(chunk.text) <= 130 for chunk in chunks)
+    assert all(sum(row in chunk.text for chunk in chunks) == 1 for row in rows)
+
+
 def test_cleanup_preserves_body_numbers_tables_and_footnotes():
     writer = PdfWriter()
     page = writer.add_blank_page(width=600, height=800)
@@ -374,6 +409,67 @@ def test_key_points_uses_broad_evidence_with_a_short_answer_prompt(monkeypatch, 
     assert "one topic per claim" not in seen[0]
 
 
+def test_short_introduction_repairs_numbered_claims(monkeypatch, tmp_path):
+    source = chunk(text="The brochure describes death benefits, monthly charges and an assumed 4% rate.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    calls = []
+    def generate(messages):
+        calls.append(messages)
+        wording = ("The assumed 4% rate is part of this plan." if len(calls) == 1 else
+                   "The plan has death benefits and ongoing monthly charges.")
+        return json.dumps({"status": "answered", "claims": [{
+            "text": wording, "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("Introduce this policy", "en", tmp_path, key_points=True)
+    assert status == "answered" and citations and "4%" not in answer
+    assert len(calls) == 2
+    assert "no digits" in calls[1][-1]["content"]
+
+
+def test_investment_considerations_use_broad_evidence_without_personal_decision(monkeypatch, tmp_path):
+    source = chunk(text="Crediting rates are not guaranteed. Monthly charges and early surrender may reduce cash value.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    def forbidden(*a, **kw):
+        raise AssertionError("Broad investment factors used narrow retrieval")
+    monkeypatch.setattr(query, "retrieve", forbidden)
+    def generate(messages):
+        assert "general considerations" in messages[0]["content"]
+        assert "Do not decide whether this" in messages[0]["content"]
+        return json.dumps({"status": "answered", "claims": [{
+            "text": "Crediting rates are not guaranteed, and monthly charges reduce cash value.",
+            "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("What should I consider?", "en", tmp_path, focus="investment")
+    assert status == "answered" and citations and "not guaranteed" in answer
+    assert "not personal insurance advice" in answer
+    assert "Investment risk reminder:" in answer
+    assert "early surrender" in answer
+    assert "not personal investment advice" in answer
+    chinese, _, _ = query.answer_question("这份保单的投资风险是什么？", "zh-Hans", tmp_path, focus="investment")
+    assert "不是个人投保建议" in chinese
+    assert "投资风险提示：" in chinese
+    assert "不构成针对个人的投资建议" in chinese
+    plain = GeneratedAnswer.model_validate({"status": "answered", "claims": [{
+        "text": "Monthly charges reduce cash value.", "evidence": [source.chunk_id]}]})
+    ordinary, _, _ = query._render_answer(plain, [source], "en")
+    assert "Investment risk reminder:" not in ordinary
+
+
+def test_specific_return_question_uses_normal_retrieval_with_risk_notice(monkeypatch, tmp_path):
+    source = chunk(text="The assumed crediting rate is not guaranteed.")
+    monkeypatch.setattr(query, "retrieve", lambda *a, **kw: [source])
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: pytest.fail("Specific question used overview retrieval"))
+    def generate(messages):
+        assert "general considerations" not in messages[0]["content"]
+        return json.dumps({"status": "answered", "claims": [{
+            "text": "The assumed crediting rate is not guaranteed.", "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("Is the return guaranteed?", "en", tmp_path,
+                                                       topic="investment")
+    assert status == "answered" and citations
+    assert "Investment risk reminder:" in answer
+
+
 def test_cautions_use_disclosure_evidence_without_assumed_rate_details(monkeypatch, tmp_path):
     source = chunk(text="Cash withdrawals reduce cash value while monthly charges remain deductible.")
     monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
@@ -424,7 +520,7 @@ def test_overview_repairs_bad_citations_once_then_validates_again(monkeypatch, t
     def generate(messages):
         calls.append(len(messages))
         if len(calls) == 2:
-            assert "failed source/number validation" in messages[-1]["content"]
+            assert "failed validation" in messages[-1]["content"]
             assert "not a new end-user question" in messages[-1]["content"]
             assert "requested answer_language" in messages[-1]["content"]
         days = 21 if len(calls) == 2 and repair_succeeds else 99

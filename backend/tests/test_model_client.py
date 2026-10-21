@@ -50,9 +50,9 @@ def test_classifier_uses_its_own_schema_and_small_token_budget(monkeypatch):
     captured = {}
     def post(url, headers, body):
         captured.update(body=body)
-        return {"choices": [{"finish_reason": "stop", "message": {"content": '{"category":"document_qa"}'}}]}
+        return {"choices": [{"finish_reason": "stop", "message": {"content": '{"category":"document_qa","topic":"general"}'}}]}
     monkeypatch.setattr(model_client, "_post", post)
     result = model_client.generate_json([], INTENT_JSON_SCHEMA, "question_intent", max_tokens=80)
-    assert result == '{"category":"document_qa"}'
+    assert result == '{"category":"document_qa","topic":"general"}'
     assert captured["body"]["max_tokens"] == 80
     assert captured["body"]["response_format"]["json_schema"]["schema"] == INTENT_JSON_SCHEMA

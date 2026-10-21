@@ -27,10 +27,10 @@ def test_llm_scope_is_not_decided_by_keywords():
 
 
 @pytest.mark.parametrize("raw,expected", [
-    ('{"category":"document_overview"}', "document_overview"),
-    ('{"category":"personal_advice"}', "personal_advice"),
-    ('{"category":"blocked"}', "blocked"),
-    ('{"category":"uncertain"}', "uncertain"),
+    ('{"category":"document_overview","topic":"investment"}', ("document_overview", "investment")),
+    ('{"category":"personal_advice","topic":"investment"}', ("personal_advice", "investment")),
+    ('{"category":"blocked","topic":"general"}', ("blocked", "general")),
+    ('{"category":"uncertain","topic":"general"}', ("uncertain", "general")),
 ])
 def test_intent_validates_labels_and_keeps_history_as_data(monkeypatch, raw, expected):
     captured = {}
@@ -40,7 +40,8 @@ def test_intent_validates_labels_and_keeps_history_as_data(monkeypatch, raw, exp
     monkeypatch.setattr(guardrails, "generate_json", generate)
     history = [{"role": "user", "content": "Is the interest guaranteed?"},
                {"role": "assistant", "content": "The assumed rate is not guaranteed."}]
-    assert classify_question("And after that?", history) == expected
+    intent = classify_question("And after that?", history)
+    assert (intent.category, intent.topic) == expected
     assert captured["messages"][0]["role"] == "system"
     assert "recent_conversation" in captured["messages"][1]["content"]
     assert "The assumed rate" in captured["messages"][1]["content"]
@@ -48,8 +49,10 @@ def test_intent_validates_labels_and_keeps_history_as_data(monkeypatch, raw, exp
 
 
 @pytest.mark.parametrize("raw", [
-    'not JSON', '{"category":"allow_anything"}',
-    '{"category":"document_qa","execute":"anything"}',
+    'not JSON', '{"category":"allow_anything","topic":"general"}',
+    '{"category":"document_qa"}',
+    '{"category":"document_qa","topic":"advice"}',
+    '{"category":"document_qa","topic":"general","execute":"anything"}',
 ])
 def test_bad_classifier_output_is_a_model_error_not_a_user_clarification(monkeypatch, raw):
     monkeypatch.setattr(guardrails, "generate_json", lambda *a, **kw: raw)

@@ -191,18 +191,18 @@ numbers are removed before scoring:
 These scores measure whether retrieval finds the right pages. They do not
 measure whether the final answer is correct.
 
-### Chunk size and overlap (7 October 2026)
+### Chunk size and overlap (17 October 2026)
 
 Keyword weight is fixed at 0.12. Sizes and overlap are in characters.
 
 | Chunk size / overlap | Chunks | Page Precision@5 | Page Recall@5 | Page MRR |
 |---|---:|---:|---:|---:|
-| 600 / 0 | 72 | 0.528 | 1.000 | 0.944 |
+| 600 / 0 | 72 | 0.519 | 1.000 | 0.944 |
 | 600 / 90 | 79 | 0.537 | 1.000 | 0.944 |
 | 1000 / 0 | 50 | 0.513 | 1.000 | **1.000** |
-| **1000 / 150 (current)** | 53 | **0.541** | 1.000 | **1.000** |
-| 1400 / 0 | 37 | 0.457 | 1.000 | 0.944 |
-| 1400 / 210 | 37 | 0.500 | 1.000 | 0.889 |
+| **1000 / 150 (current)** | 54 | **0.541** | 1.000 | **1.000** |
+| 1400 / 0 | 38 | 0.467 | 1.000 | 0.944 |
+| 1400 / 210 | 38 | 0.500 | 1.000 | 0.889 |
 
 The current setting had the highest page precision and shared the best MRR.
 Using 1000-character chunks without overlap sent about 11% less source text to
@@ -215,7 +215,7 @@ Selected results from nine page-labeled questions:
 
 | Keyword weight | Page Precision@5 | Page Recall@5 | Page MRR |
 |---|---:|---:|---:|
-| 0 (vector only) | 0.578 | 0.944 | 0.944 |
+| 0 (vector only) | 0.578 | 0.944 | 1.000 |
 | **0.12 (current)** | 0.541 | **1.000** | **1.000** |
 | 1.0 | 0.448 | **1.000** | **1.000** |
 
@@ -227,7 +227,7 @@ the [full comparison](evals/retrieval_results.md).
 
 | Check | Recorded result | What it checks |
 |---|---|---|
-| Backend tests with mocked models | 115 passed (15 October 2026) | Extraction, indexing, retrieval, guardrails, sessions and streaming |
+| Backend tests with mocked models | 134 passed (21 October 2026) | Extraction, indexing, retrieval, guardrails, sessions and streaming |
 | Frontend tests | 17 passed (8 October 2026) | SSE parsing, cancellation, final-answer replacement and citation links |
 | Live end-to-end smoke cases | 28 / 28 passed in one full run (15 October 2026) | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
 
@@ -253,7 +253,7 @@ passed three reruns. See the [verification record](docs/verification.md).
 With the backend running (this calls the configured model API):
 
 ```sh
-.venv/bin/python evals/run_eval.py         # 28 end-to-end cases
+.venv/bin/python evals/run_eval.py         # 30 end-to-end cases
 .venv/bin/python evals/retrieval_sweep.py  # chunk-setting comparison
 .venv/bin/python evals/lexical_weight_sweep.py  # keyword-weight comparison
 ```

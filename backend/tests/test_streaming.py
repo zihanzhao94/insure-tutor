@@ -6,11 +6,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import chat, main, model_client
+from app import chat, guardrails, main, model_client
 from app.guardrails import message
 from app.model_client import ModelError
 from app.rag import query
-from app.schemas import ChatRequest, DocumentChunk
+from app.schemas import ChatRequest, DocumentChunk, QuestionIntent
 from app.storage import load_history
 
 
@@ -190,6 +190,20 @@ def test_rag_yields_a_validated_claim_before_provider_finishes(monkeypatch, tmp_
     assert len(result["citations"]) == 1
 
 
+def test_investment_stream_appends_disclaimer_and_risks_to_final_answer(monkeypatch, tmp_path):
+    setup_rag(monkeypatch, [source("Crediting rates are not guaranteed and charges reduce cash value.")])
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: pytest.fail("Specific question used overview retrieval"))
+    raw = answer_json(claim("Crediting rates are not guaranteed."))
+    monkeypatch.setattr(query, "stream_answer", lambda messages: iter([raw]))
+    events = list(query.stream_answer_question("Investment risks of this policy?", "en", tmp_path,
+                                               topic="investment"))
+    result = final_result(events)
+    assert result["status"] == "answered"
+    assert "Investment risk reminder:" in result["answer"]
+    assert "not personal insurance advice" in result["answer"]
+    assert delta_text(events) == result["answer"]
+
+
 def test_rag_handles_escaped_strings_braces_and_chinese_across_fragments(monkeypatch, tmp_path):
     text = '保单说明 "insured {person}" 和 \\path 的含义。'
     setup_rag(monkeypatch, [source(text + " 这些文字来自保险宣传册。")])
@@ -286,7 +300,7 @@ def test_no_evidence_and_extractive_mode_do_not_call_generation(monkeypatch, tmp
     assert len(result["citations"]) == (0 if empty else 1)
 
 
-def test_overview_resets_partial_text_before_one_successful_repair(monkeypatch, tmp_path):
+def test_overview_resets_partial_text_before_one_successful_repair(monkeypatch, tmp_path, caplog):
     setup_rag(monkeypatch)
     calls = []
     def stream(messages):
@@ -295,7 +309,8 @@ def test_overview_resets_partial_text_before_one_successful_repair(monkeypatch, 
             yield '{"status":"answered","claims":[' + json.dumps(claim()) + ","
             yield json.dumps(claim("The cooling-off period is 99 days.")) + "]}"
         else:
-            assert "failed source/number validation" in messages[-1]["content"]
+            assert "failed validation" in messages[-1]["content"]
+            assert "For every number, cite a supplied passage containing it" in messages[-1]["content"]
             yield answer_json(claim("Cancellation has a 21-day cooling-off period."))
     monkeypatch.setattr(query, "stream_answer", stream)
     events = list(query.stream_answer_question("Summarize the brochure", "en", tmp_path, overview=True))
@@ -308,6 +323,9 @@ def test_overview_resets_partial_text_before_one_successful_repair(monkeypatch, 
     assert result["status"] == "answered"
     assert delta_text(events[reset + 1:]) == result["answer"]
     assert result["answer"].startswith("Cancellation has a 21-day cooling-off period.")
+    assert "reason=unsupported_number" in caplog.text
+    assert "preview_claims=1" in caplog.text
+    assert "99 days" not in caplog.text
 
 
 def test_overview_does_not_retry_beyond_one_repair(monkeypatch, tmp_path):
@@ -325,7 +343,23 @@ def test_overview_does_not_retry_beyond_one_repair(monkeypatch, tmp_path):
 
 def setup_chat(monkeypatch, *, category="document_qa"):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: category)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: QuestionIntent(category=category, topic="general"))
+
+
+def test_investment_intent_keeps_risk_notice_in_streamed_final_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(guardrails, "generate_json", lambda *a, **kw:
+                        '{"category":"document_qa","topic":"investment"}')
+    setup_rag(monkeypatch, [source("Crediting rates are not guaranteed.")])
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: pytest.fail("Specific question used overview retrieval"))
+    monkeypatch.setattr(query, "stream_answer", lambda messages:
+                        iter([answer_json(claim("Crediting rates are not guaranteed."))]))
+    events = list(chat.stream_chat(ChatRequest(message="Can this policy earn a return?")))
+    result = final_result(events)
+    assert result["status"] == "answered" and result["citations"]
+    assert "Investment risk reminder:" in result["answer"]
+    assert delta_text(events) == result["answer"]
+    assert load_history(result["session_id"], tmp_path)[-1]["content"] == result["answer"]
 
 
 def test_stream_chat_persists_only_the_canonical_result_and_reuses_session(monkeypatch, tmp_path):

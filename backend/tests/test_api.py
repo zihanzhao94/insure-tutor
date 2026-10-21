@@ -1,8 +1,15 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
-from app import chat, main
-from app.schemas import ChatRequest
+from app import chat, guardrails, main
+from app.rag import query
+from app.schemas import ChatRequest, DocumentChunk, QuestionIntent
 from app.storage import load_history, save_turn
+
+
+def routed(category, topic="general"):
+    return QuestionIntent(category=category, topic=topic)
 
 
 def test_conversations_are_isolated_and_ordered(tmp_path):
@@ -23,7 +30,7 @@ def test_followup_uses_previous_question(monkeypatch, tmp_path):
     classified = []
     def classify(question, history):
         classified.append(history)
-        return "document_qa"
+        return routed("document_qa")
     monkeypatch.setattr(chat, "classify_question", classify)
     first = chat.handle_chat(ChatRequest(message="What is the guaranteed insurance account value?"))
     second = chat.handle_chat(ChatRequest(message="And when does it apply?", session_id=first.session_id))
@@ -39,7 +46,7 @@ def test_followup_uses_previous_question(monkeypatch, tmp_path):
 def test_memory_keeps_three_turns_and_excludes_old_answers_from_retrieval(monkeypatch):
     monkeypatch.setenv("MEMORY_TURNS", "3")
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: "document_qa")
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("document_qa"))
     calls = []
     def answer(question, language, index_dir, **options):
         calls.append((question, options))
@@ -60,7 +67,7 @@ def test_memory_keeps_three_turns_and_excludes_old_answers_from_retrieval(monkey
 
 def test_brief_important_part_request_routes_to_overview_even_if_classifier_is_uncertain(monkeypatch):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: "uncertain")
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("uncertain"))
     seen = []
     def answer(question, language, index_dir, **options):
         seen.append((question, options))
@@ -71,12 +78,99 @@ def test_brief_important_part_request_routes_to_overview_even_if_classifier_is_u
     assert seen == [("what is the most import part", {"key_points": True})]
 
 
+def test_introduce_policy_uses_short_sourced_overview(monkeypatch):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: pytest.fail("Intro needs no intent call"))
+    seen = []
+    def answer(question, language, index_dir, **options):
+        seen.append((question, options))
+        return "A supported introduction.", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    result = chat.handle_chat(ChatRequest(message="Introduce this policy"))
+    assert result.status == "answered"
+    assert seen == [("Introduce this policy", {"key_points": True})]
+
+
+def test_general_investment_considerations_reach_sourced_answer(monkeypatch):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    classified = []
+    monkeypatch.setattr(chat, "classify_question", lambda question, history:
+                        classified.append(question) or routed("document_overview", "investment"))
+    seen = []
+    def answer(question, language, index_dir, **options):
+        seen.append((question, options))
+        return "A supported discussion of risks and charges.", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    question = "What should I consider before using this policy as an investment?"
+    result = chat.handle_chat(ChatRequest(message=question))
+    assert result.status == "answered"
+    assert classified == [question]
+    assert seen[0] == (question, {"focus": "investment", "topic": "investment"})
+
+
+@pytest.mark.parametrize("question", [
+    "What investment risks does this policy have?",
+    "这份保单有哪些投资风险？",
+    "How might my savings grow under this policy?",
+])
+def test_other_investment_questions_keep_narrow_search_and_add_risk_topic(monkeypatch, question):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("document_qa", "investment"))
+    seen = []
+    def answer(retrieval_query, language, index_dir, **options):
+        seen.append(options)
+        return "Supported risks.", [], "answered"
+    monkeypatch.setattr(chat, "answer_question", answer)
+    assert chat.handle_chat(ChatRequest(message=question)).status == "answered"
+    assert seen[0] == {"topic": "investment"}
+
+
+def test_personal_investment_decision_still_does_not_retrieve(monkeypatch):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("personal_advice", "investment"))
+    monkeypatch.setattr(chat, "answer_question", lambda *a, **kw: pytest.fail("Personal advice reached RAG"))
+    result = chat.handle_chat(ChatRequest(message="Should I invest in this policy?"))
+    assert result.status == "out_of_scope" and not result.citations
+
+
+@pytest.mark.parametrize("question,category,topic,expected_search", [
+    ("How might the value of my savings grow under this policy?", "document_qa", "investment", "narrow"),
+    ("What should I consider before using this policy as an investment?", "document_overview", "investment", "overview"),
+    ("What are the death benefits?", "document_qa", "general", "narrow"),
+    ("Should I buy this policy for retirement?", "personal_advice", "investment", None),
+])
+def test_model_intent_controls_retrieval_and_final_risk_notice(
+        monkeypatch, question, category, topic, expected_search):
+    calls = []
+    def classify(messages, schema, name, **kwargs):
+        calls.append("classify")
+        assert schema["required"] == ["category", "topic"]
+        return json.dumps({"category": category, "topic": topic})
+    monkeypatch.setattr(guardrails, "generate_json", classify)
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    source = DocumentChunk(document_id="plan", filename="plan.pdf", pdf_page=8,
+                           chunk_id="plan:p8:c1", text="Monthly charges can reduce cash value.")
+    monkeypatch.setattr(query, "retrieve", lambda *a, **kw: calls.append("narrow") or [source])
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: calls.append("overview") or [source])
+    monkeypatch.setattr(query, "generate_answer", lambda messages: json.dumps({
+        "status": "answered", "claims": [{"text": "Monthly charges can reduce cash value.",
+                                             "evidence": [source.chunk_id]}]}))
+    result = chat.handle_chat(ChatRequest(message=question))
+    assert calls == ["classify"] + ([expected_search] if expected_search else [])
+    if expected_search is None:
+        assert result.status == "out_of_scope" and not result.citations
+        assert "Investment risk reminder:" not in result.answer
+    else:
+        assert result.status == "answered" and result.citations
+        assert ("Investment risk reminder:" in result.answer) == (topic == "investment")
+
+
 def test_topic_reply_to_clarification_is_resolved_and_original_input_is_saved(monkeypatch, tmp_path):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
     classified = []
     def classify(question, history):
         classified.append(question)
-        return "uncertain"
+        return routed("uncertain")
     monkeypatch.setattr(chat, "classify_question", classify)
     seen = []
     def answer(question, language, index_dir, **options):
@@ -114,7 +208,7 @@ def test_short_topic_standalone_is_a_document_question(monkeypatch):
 ])
 def test_implicit_brochure_questions_reach_grounded_rag(monkeypatch, question, focus, query_fragment):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: "out_of_scope")
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("out_of_scope"))
     captured = {}
     def answer(query, language, index_dir, **options):
         captured.update(query=query, options=options)
@@ -131,7 +225,7 @@ def test_implicit_brochure_questions_reach_grounded_rag(monkeypatch, question, f
 def test_broad_option_questions_rely_on_intent_classifier(monkeypatch, question):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
     classified = []
-    monkeypatch.setattr(chat, "classify_question", lambda q, history: classified.append(q) or "document_qa")
+    monkeypatch.setattr(chat, "classify_question", lambda q, history: classified.append(q) or routed("document_qa"))
     captured = {}
     def answer(query, language, index_dir, **options):
         captured.update(query=query, options=options)
@@ -188,7 +282,7 @@ def test_missing_index_returns_useful_health_and_chat_error():
 ])
 def test_intent_rejections_do_not_retrieve(monkeypatch, tmp_path, category, status):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: category)
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed(category))
     def forbidden(*a, **kw):
         raise AssertionError("Rejected intent reached RAG")
     monkeypatch.setattr(chat, "answer_question", forbidden)
@@ -202,7 +296,7 @@ def test_intent_rejections_do_not_retrieve(monkeypatch, tmp_path, category, stat
 
 def test_overview_routes_without_keyword_gate(monkeypatch):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: "document_overview")
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("document_overview"))
     captured = {}
     def answer(question, language, index_dir, **kwargs):
         captured.update(question=question, options=kwargs)
