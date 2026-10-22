@@ -84,8 +84,10 @@ def _chat_events(request, *, streaming):
         query = implicit[0]
     else:
         query = _retrieval_query(question, history)
-    # Step 4: choose the answer style: cautions, key points, full overview, or a normal answer.
-    if implicit:
+    # Step 4: personal insurance guidance uses broad product evidence and user context.
+    if category == "insurance_advice":
+        options = {"focus": "insurance_advice"}
+    elif implicit:
         options = {"focus": implicit[1]}
     elif key_points:
         options = {"key_points": True}

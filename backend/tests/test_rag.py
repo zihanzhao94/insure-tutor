@@ -470,6 +470,48 @@ def test_specific_return_question_uses_normal_retrieval_with_risk_notice(monkeyp
     assert "Investment risk reminder:" in answer
 
 
+def test_personal_advice_still_repairs_unsupported_premium_numbers(monkeypatch, tmp_path):
+    source = chunk(text="Monthly charges reduce cash value and insufficient value may cause lapse.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    calls = []
+    def generate(messages):
+        calls.append(len(messages))
+        if len(calls) == 1:
+            wording = "I recommend paying 9999 each month."
+        else:
+            assert "Product numbers" in messages[0]["content"]
+            assert "without repeating numeric ages" in messages[-1]["content"]
+            wording = "I suggest confirming a sustainable premium budget before buying because charges may cause lapse."
+        return json.dumps({"status": "answered", "claims": [{
+            "text": wording, "evidence": [source.chunk_id]}]})
+    monkeypatch.setattr(query, "generate_answer", generate)
+    answer, citations, status = query.answer_question("I earn 9999. Should I buy?", "en", tmp_path,
+                                                       focus="insurance_advice")
+    assert status == "answered" and citations
+    assert calls == [2, 4]
+    assert "9999" not in answer
+    assert "preliminary insurance recommendation" in answer
+
+
+@pytest.mark.parametrize("role,focus,expected", [
+    ("user", "insurance_advice", "answered"),
+    ("assistant", "insurance_advice", "insufficient_evidence"),
+    ("user", None, "insufficient_evidence"),
+])
+def test_only_advice_user_history_can_support_personal_numbers(monkeypatch, tmp_path, role, focus, expected):
+    source = chunk(text="Monthly charges may cause lapse when cash value is insufficient.")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    monkeypatch.setattr(query, "retrieve", lambda *a: [source])
+    monkeypatch.setattr(query, "generate_answer", lambda messages: json.dumps({
+        "status": "answered", "claims": [{
+            "text": "You are 23 years old; confirm a premium funding source because charges may cause lapse.",
+            "evidence": [source.chunk_id]}]}))
+    _, citations, status = query.answer_question("Would this policy suit me?", "en", tmp_path,
+                                                focus=focus, conversation=[{"role": role, "content": "I'm 23 years old."}])
+    assert status == expected
+    assert bool(citations) == (expected == "answered")
+
+
 def test_cautions_use_disclosure_evidence_without_assumed_rate_details(monkeypatch, tmp_path):
     source = chunk(text="Cash withdrawals reduce cash value while monthly charges remain deductible.")
     monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])

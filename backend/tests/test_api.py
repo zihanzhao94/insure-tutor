@@ -125,11 +125,11 @@ def test_other_investment_questions_keep_narrow_search_and_add_risk_topic(monkey
     assert seen[0] == {"topic": "investment"}
 
 
-def test_personal_investment_decision_still_does_not_retrieve(monkeypatch):
+def test_individual_claim_approval_still_does_not_retrieve(monkeypatch):
     monkeypatch.setattr(chat, "load_index", lambda *a: None)
-    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("personal_advice", "investment"))
-    monkeypatch.setattr(chat, "answer_question", lambda *a, **kw: pytest.fail("Personal advice reached RAG"))
-    result = chat.handle_chat(ChatRequest(message="Should I invest in this policy?"))
+    monkeypatch.setattr(chat, "classify_question", lambda *a: routed("personal_advice"))
+    monkeypatch.setattr(chat, "answer_question", lambda *a, **kw: pytest.fail("Claim-approval decision reached RAG"))
+    result = chat.handle_chat(ChatRequest(message="Will my cancer claim definitely be approved?"))
     assert result.status == "out_of_scope" and not result.citations
 
 
@@ -137,7 +137,8 @@ def test_personal_investment_decision_still_does_not_retrieve(monkeypatch):
     ("How might the value of my savings grow under this policy?", "document_qa", "investment", "narrow"),
     ("What should I consider before using this policy as an investment?", "document_overview", "investment", "overview"),
     ("What are the death benefits?", "document_qa", "general", "narrow"),
-    ("Should I buy this policy for retirement?", "personal_advice", "investment", None),
+    ("Should I buy this policy for retirement?", "insurance_advice", "investment", "overview"),
+    ("Will my cancer claim definitely be approved?", "personal_advice", "general", None),
 ])
 def test_model_intent_controls_retrieval_and_final_risk_notice(
         monkeypatch, question, category, topic, expected_search):
@@ -162,7 +163,40 @@ def test_model_intent_controls_retrieval_and_final_risk_notice(
         assert "Investment risk reminder:" not in result.answer
     else:
         assert result.status == "answered" and result.citations
-        assert ("Investment risk reminder:" in result.answer) == (topic == "investment")
+        if category == "insurance_advice":
+            assert "preliminary insurance recommendation" in result.answer
+            assert "Risk reminder:" in result.answer
+            assert "not personal insurance advice" not in result.answer
+        else:
+            assert ("Investment risk reminder:" in result.answer) == (topic == "investment")
+
+
+@pytest.mark.parametrize("age,language", [(23, "zh-Hans"), (45, "zh-Hans"), (23, "zh-Hant")])
+def test_student_without_income_gets_personal_guidance_with_localized_risks(monkeypatch, tmp_path, age, language):
+    question = f"我{age}岁，学生，没有收入，适合哪个产品"
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(guardrails, "generate_json", lambda *a, **kw:
+                        '{"category":"insurance_advice","topic":"general"}')
+    source = DocumentChunk(document_id="plan", filename="plan.pdf", pdf_page=14,
+                           chunk_id="plan:p14:c1", text="保单持续扣除费用，现金价值不足时可能终止。提前退保可能造成损失。")
+    monkeypatch.setattr(query, "retrieve_overview", lambda *a: [source])
+    monkeypatch.setattr(query, "retrieve", lambda *a, **kw: pytest.fail("Personal guidance used narrow retrieval"))
+    def generate(messages):
+        prompt = json.loads(messages[-1]["content"])
+        assert prompt["question"] == question
+        assert "conditional buying" in messages[0]["content"]
+        assert "do not assume no income means no savings or support" in messages[0]["content"]
+        return json.dumps({"status": "answered", "claims": [{
+            "text": "考虑到你目前没有收入，我建议先确认持续缴费来源，再考虑购买；这款计划会持续扣费，现金价值不足可能终止。",
+            "evidence": [source.chunk_id]}]}, ensure_ascii=False)
+    monkeypatch.setattr(query, "generate_answer", generate)
+    result = chat.handle_chat(ChatRequest(message=question, ui_language=language))
+    assert result.status == "answered" and result.citations
+    assert "目前只有" in result.answer
+    assert guardrails.message("advice_disclaimer", language) in result.answer
+    assert guardrails.message("advice_risk", language) in result.answer
+    assert "不是个人投保建议" not in result.answer
+    assert load_history(result.session_id, tmp_path)[-1]["content"] == result.answer
 
 
 def test_topic_reply_to_clarification_is_resolved_and_original_input_is_saved(monkeypatch, tmp_path):

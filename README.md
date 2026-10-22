@@ -146,8 +146,11 @@ An editable diagram is in [docs/architecture.drawio](docs/architecture.drawio).
 - **Check cited facts.** Check source IDs and numbers before showing an answer.
   This cannot confirm that the answer interprets the text correctly.
 - **Handle unsuitable questions.** Ask when a question is unclear. Refuse
-  personal advice, unrelated requests and attempts to bypass the rules. Say
+  medical/claim-approval decisions, unrelated requests and attempts to bypass the rules. Say
   when the PDF does not provide enough evidence.
+- **Give preliminary buying guidance.** Use the user's circumstances and this
+  plan's terms to explain suitability, with a disclaimer and risk reminder.
+  Only the supplied product and its documented options can be assessed.
 - **Keep chat and documents separate.** Chroma stores searchable PDF chunks;
   SQLite saves questions and final answers. Use the last three turns to
   understand follow-up questions.
@@ -227,7 +230,7 @@ the [full comparison](evals/retrieval_results.md).
 
 | Check | Recorded result | What it checks |
 |---|---|---|
-| Backend tests with mocked models | 134 passed (21 October 2026) | Extraction, indexing, retrieval, guardrails, sessions and streaming |
+| Backend tests with mocked models | 155 passed (21 October 2026) | Extraction, indexing, retrieval, guardrails, sessions and streaming |
 | Frontend tests | 17 passed (8 October 2026) | SSE parsing, cancellation, final-answer replacement and citation links |
 | Live end-to-end smoke cases | 28 / 28 passed in one full run (15 October 2026) | Response status, expected source pages, selected phrases/numbers and empty citations for refusals |
 
@@ -253,7 +256,7 @@ passed three reruns. See the [verification record](docs/verification.md).
 With the backend running (this calls the configured model API):
 
 ```sh
-.venv/bin/python evals/run_eval.py         # 30 end-to-end cases
+.venv/bin/python evals/run_eval.py         # 33 end-to-end cases
 .venv/bin/python evals/retrieval_sweep.py  # chunk-setting comparison
 .venv/bin/python evals/lexical_weight_sweep.py  # keyword-weight comparison
 ```

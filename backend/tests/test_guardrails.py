@@ -28,6 +28,7 @@ def test_llm_scope_is_not_decided_by_keywords():
 
 @pytest.mark.parametrize("raw,expected", [
     ('{"category":"document_overview","topic":"investment"}', ("document_overview", "investment")),
+    ('{"category":"insurance_advice","topic":"general"}', ("insurance_advice", "general")),
     ('{"category":"personal_advice","topic":"investment"}', ("personal_advice", "investment")),
     ('{"category":"blocked","topic":"general"}', ("blocked", "general")),
     ('{"category":"uncertain","topic":"general"}', ("uncertain", "general")),
@@ -85,6 +86,47 @@ def test_equivalent_number_formatting_and_server_owned_excerpt():
         {'text': 'The assumed rate is 4%, and the amount is USD 5000.', 'evidence': ['p1']} ]})
     validate_answer(answer, [source])
     assert answer.claims[0].evidence[0].quote == source.text
+
+
+@pytest.mark.parametrize("context,text", [
+    ("我23岁，学生，没有收入", "您23岁且没有收入，我建议先确认缴费来源，因为保单会持续扣费。"),
+    ("我45岁，学生，没有收入", "您45岁且没有收入，我建议先确认缴费来源，因为保单会持续扣费。"),
+    ("I'm 23 years old, with no income.", "You are 23 years old; confirm a funding source because monthly charges continue."),
+    ("我月薪5,000，这个计划适合我吗？", "您的月薪5000，我建议先核对可负担保费，因为保单会持续扣费。"),
+    ("我月薪5000，这个计划适合我吗？", "对月薪5000的您，我建议先核对可负担保费，因为保单会持续扣费。"),
+    ("My monthly income is 5000.", "Your monthly income is 5000; check your budget because monthly charges continue."),
+])
+def test_personal_advice_can_repeat_verified_profile_facts_without_using_them_as_policy_evidence(context, text):
+    source = DocumentChunk(document_id="plan", filename="plan.pdf", pdf_page=14,
+                           chunk_id="p14", text="Monthly charges continue and insufficient cash value may cause lapse. 保单会持续扣费。")
+    answer = GeneratedAnswer.model_validate({"status": "answered", "claims": [{
+        "text": text, "evidence": [source.chunk_id]}]})
+    validate_answer(answer, [source], personal_context=[context])
+    with pytest.raises(ValueError, match="number absent"):
+        validate_answer(answer, [source])
+
+
+@pytest.mark.parametrize("context,text", [
+    ("我23岁，学生，没有收入", "您24岁，可以购买这个计划。"),
+    ("我23岁，学生，没有收入", "您23岁，我建议每月缴付23美元。"),
+    ("我月薪5000，这个计划适合我吗？", "您的月薪5000美元，可以承担保费。"),
+])
+def test_profile_numbers_do_not_authorize_wrong_facts_or_invented_policy_amounts(context, text):
+    source = DocumentChunk(document_id="plan", filename="plan.pdf", pdf_page=14,
+                           chunk_id="p14", text="Monthly charges continue and insufficient cash value may cause lapse.")
+    answer = GeneratedAnswer.model_validate({"status": "answered", "claims": [{
+        "text": text, "evidence": [source.chunk_id]}]})
+    with pytest.raises(ValueError, match="number absent"):
+        validate_answer(answer, [source], personal_context=[context])
+
+
+def test_latest_user_age_replaces_an_earlier_profile_number():
+    source = DocumentChunk(document_id="plan", filename="plan.pdf", pdf_page=14,
+                           chunk_id="p14", text="Monthly charges can reduce cash value.")
+    answer = GeneratedAnswer.model_validate({"status": "answered", "claims": [{
+        "text": "您23岁，应先确认费用负担。", "evidence": [source.chunk_id]}]})
+    with pytest.raises(ValueError, match="number absent"):
+        validate_answer(answer, [source], personal_context=["我23岁", "我45岁"])
 
 
 def test_bilingual_amount_conflict_is_detected_from_actual_source():

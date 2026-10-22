@@ -8,7 +8,7 @@ With the backend running, use:
 .venv/bin/python evals/run_eval.py --ids rate_en cooling_hant conflict_en injection_en
 ```
 
-These calls use the configured embedding/chat APIs. The thirty cases cover
+These calls use the configured embedding/chat APIs. The thirty-three cases cover
 English, Simplified and Traditional Chinese, policy conditions, follow-ups,
 missing evidence, a bilingual table discrepancy, unrelated questions, personal
 buying advice and prompt injection, plus document overviews, paraphrased advice,
@@ -16,6 +16,10 @@ topic changes after history, ambiguous input and legitimate exclusion questions.
 They also check a short "Introduce this policy" answer and an educational
 investment-risk question, which should explain brochure-backed trade-offs
 without making a personal buy/invest decision.
+Personal buying requests now expect preliminary recommendations with cited
+product facts, a single-product scope notice and risk/disclaimer text. Cases
+include students with no income at different ages and a salary-based question;
+individual claim-approval decisions still expect refusal.
 Page numbers are one-based PDF file pages.
 `prerequisite_questions` sends multiple completed turns with the same session ID
 before checking the final question.

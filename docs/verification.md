@@ -1,5 +1,24 @@
 # Verification record
 
+## Personal insurance buying guidance (2026-10-21)
+
+- Personal buying requests now use `insurance_advice` rather than the fixed
+  personal-advice refusal. The answer combines user circumstances with cited
+  product terms and includes a single-product scope notice, disclaimer and risks.
+- Verified the screenshot questions for students aged 23 and 45 with no income,
+  and a monthly-income question, using real model calls through `stream_chat`.
+  All three returned `answered` with citations and the required notices. An
+  individual cancer-claim approval question still returned `out_of_scope`.
+  Report: `evals/results/20261021T085231Z-personal-advice.json` (local, ignored).
+- The age cases each needed one repair to remove rate details from the
+  preliminary recommendation. Verified user-attributed age/income/budget values
+  are checked against user messages; recommended policy amounts still need
+  source evidence, even when they equal a personal number.
+- **155 backend tests and 17 frontend tests passed; the frontend build passed.**
+  The full 33-case HTTP smoke suite was not rerun. These focused checks verify
+  routing, citations and notices, not financial suitability or semantic accuracy;
+  recommendations can still be generic and need comparison with the full terms.
+
 ## Answer language follows the selector (2026-10-08)
 
 - Reproduced Simplified Chinese questions answered in Traditional Chinese (the

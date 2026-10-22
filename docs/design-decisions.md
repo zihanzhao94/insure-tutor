@@ -214,8 +214,9 @@ checks before display; the complete final response replaces any preview.
 This prevents invented citation locations while keeping source support open to
 review. It does not replace semantic evaluation of the answer.
 
-The classifier returns only `document_qa`, `document_overview`, `personal_advice`,
-`out_of_scope`, `blocked` or `uncertain`. It uses the existing chat model with an
+The classifier returns a category (`document_qa`, `document_overview`,
+`insurance_advice`, `personal_advice`, `out_of_scope`, `blocked` or `uncertain`)
+and a topic (`general` or `investment`). It uses the existing chat model with an
 80-token output budget and strict OpenAI JSON schema; Pydantic validates labels.
 Recent conversation resolves references but does not authorize unrelated topics.
 Clear requests such as "What are the important terms in this document?" proceed
@@ -223,6 +224,19 @@ without insurance keywords. Unknown/malformed labels and provider failures retur
 a safe API error rather than asking the user to clarify or allowing unchecked RAG.
 Unclear input is distinct from a clear question whose answer is absent from the PDF.
 Clarification turns are saved so the next question can supply the missing context.
+
+Personal insurance buying requests use `insurance_advice`: generation receives
+the user's stated circumstances and broad product evidence, gives a preliminary
+recommendation and asks only for important missing details. Lack of income calls
+for checking a sustainable funding source, without assuming the user has no
+savings or support. The server adds a single-product scope notice, disclaimer
+and risk reminder. Claims retain citation and number checks. Explicitly attributed
+age, income or budget values may repeat matching user-provided facts; the same
+numbers used as a recommended premium or other policy amount still need cited
+product evidence. Assistant history cannot authorize personal facts.
+`personal_advice` remains for individual medical,
+underwriting/claim-approval decisions or securities choices. Extractive mode
+continues to show source text without generating personal recommendations.
 
 This adds one chat-model call before generated answers; no separate AI output
 judge or agent framework is introduced. Document overviews include summary-table

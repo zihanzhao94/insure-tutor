@@ -362,6 +362,49 @@ def test_investment_intent_keeps_risk_notice_in_streamed_final_result(monkeypatc
     assert load_history(result["session_id"], tmp_path)[-1]["content"] == result["answer"]
 
 
+def test_personal_insurance_advice_stream_is_answered_and_saved_with_risk_notice(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat, "load_index", lambda *a: None)
+    monkeypatch.setattr(guardrails, "generate_json", lambda *a, **kw:
+                        '{"category":"insurance_advice","topic":"general"}')
+    setup_rag(monkeypatch, [source("Monthly charges may cause lapse if cash value is insufficient.")])
+    monkeypatch.setattr(query, "retrieve", lambda *a, **kw: pytest.fail("Personal guidance used narrow retrieval"))
+    wording = "You are 23 years old with no income; I suggest confirming a sustainable funding source before buying because monthly charges may cause lapse."
+    monkeypatch.setattr(query, "stream_answer", lambda messages: iter([answer_json(claim(wording))]))
+    iterator = iter(chat.stream_chat(ChatRequest(message="I'm 23 years old, a student with no income. Should I buy this policy?")))
+    events = []
+    for event in iterator:
+        events.append(event)
+        if event["event"] == "delta":
+            break
+    assert message("advice_scope", "en") in delta_text(events)
+    assert "preliminary insurance recommendation" not in delta_text(events)
+    events.extend(iterator)
+    result = final_result(events)
+    assert result["status"] == "answered" and result["citations"]
+    assert wording in result["answer"]
+    assert message("advice_disclaimer", "en") in result["answer"]
+    assert message("advice_risk", "en") in result["answer"]
+    assert "not personal insurance advice" not in result["answer"]
+    assert delta_text(events) == result["answer"]
+    assert load_history(result["session_id"], tmp_path)[-1]["content"] == result["answer"]
+
+
+def test_personal_advice_repairs_rate_details_before_display(monkeypatch, tmp_path):
+    setup_rag(monkeypatch, [source("The accumulated account-value condition uses 2.5%. Monthly charges may cause lapse.")])
+    calls = []
+    def stream(messages):
+        calls.append(len(messages))
+        wording = ("Consider this plan because of its 2.5% guarantee." if len(calls) == 1 else
+                   "I suggest confirming your premium budget before buying because charges may cause lapse.")
+        yield answer_json(claim(wording))
+    monkeypatch.setattr(query, "stream_answer", stream)
+    events = list(query.stream_answer_question("Should I buy this plan?", "en", tmp_path, focus="insurance_advice"))
+    assert calls == [2, 4]
+    assert "2.5%" not in delta_text(events)
+    assert any(event["event"] == "reset" for event in events)
+    assert final_result(events)["status"] == "answered"
+
+
 def test_stream_chat_persists_only_the_canonical_result_and_reuses_session(monkeypatch, tmp_path):
     setup_chat(monkeypatch)
     captured = []
